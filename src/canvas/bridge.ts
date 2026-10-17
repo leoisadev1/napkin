@@ -10,6 +10,10 @@ import type { Animator } from "./animator";
 import { createAnimator } from "./animator";
 import type { Built, IdFactory } from "./builders";
 import { arrowGeometry, buildArrow, buildFrame, DORMANT_FRAME_NAME, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
+import type { DiagramIds, EntryStep } from "./diagramBuild";
+import { buildDiagram, excalidrawMeasure } from "./diagramBuild";
+import type { DiagramSpec } from "./diagramLayout";
+import { layoutDiagram } from "./diagramLayout";
 import type { EdgeRoute, Outline, Point, Rect, Segment } from "./geometry";
 import { boundsOf } from "./bounds";
 import { boxAround, center, contains, edgePoint, inflate, labelPointOf, overlaps, routeEdge, routeOf, routePoints, segmentsOf, union } from "./geometry";
@@ -66,8 +70,25 @@ type NodeEntry = {
   root: ExcalidrawElement;
   /** Every element that belongs to the node. Frames list only themselves, not their children. */
   elements: ExcalidrawElement[];
+  /** What the node covers on the board: its elements, plus every node element for a diagram. */
+  extent: ExcalidrawElement[];
   meta: NodeMeta | null;
+  /** For a diagram node: the live diagram it belongs to. Null for everything else, and for orphaned copies. */
+  diagram: NodeId | null;
 };
+
+function nodeKindOf(meta: NodeMeta): NodeKind | null {
+  return meta.kind === "pending" || meta.kind === "ghost" ? null : meta.kind;
+}
+
+function isGhost(el: ExcalidrawElement): boolean {
+  return readMeta(el)?.kind === "ghost";
+}
+
+/** Whitespace-insensitive text, for telling a user's edit apart from our own wrapping. */
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
 
 function isDataURL(value: string): value is DataURL {
   return value.startsWith("data:");
@@ -107,8 +128,9 @@ function indexNodes(elements: readonly ExcalidrawElement[]): Map<NodeId, NodeEnt
   for (const el of live) {
     const meta = readMeta(el);
     const nodeId = nodeIdOf(meta);
-    if (meta !== null && meta.kind !== "pending" && nodeId !== null) {
-      if (meta.role === "root") roots.push({ id: nodeId, kind: meta.kind, root: el, elements: [], meta });
+    const metaKind = meta === null ? null : nodeKindOf(meta);
+    if (meta !== null && metaKind !== null && nodeId !== null) {
+      if (meta.role === "root") roots.push({ id: nodeId, kind: metaKind, root: el, elements: [], extent: [], meta, diagram: null });
       const list = parts.get(nodeId) ?? [];
       list.push(el);
       parts.set(nodeId, list);
@@ -134,12 +156,23 @@ function indexNodes(elements: readonly ExcalidrawElement[]): Map<NodeId, NodeEnt
       const child = b.type === "text" ? byId.get(b.id) : undefined;
       return child === undefined ? [] : [child];
     });
-    roots.push({ id, kind, root: el, elements: [el, ...bound], meta: null });
+    roots.push({ id, kind, root: el, elements: [el, ...bound], extent: [], meta: null, diagram: null });
   }
 
   for (const entry of roots) {
     if (entry.meta !== null) entry.elements = parts.get(entry.id) ?? [entry.root];
+    entry.extent = entry.elements;
     nodes.set(entry.id, entry);
+  }
+  // Diagram nodes belong to their diagram while they share its group; an Excalidraw duplicate gets a fresh group, so a
+  // copied node stands alone instead of being swept into the original's next re-layout.
+  for (const entry of nodes.values()) {
+    const meta = entry.meta;
+    if (meta === null || meta.kind !== "member") continue;
+    const owner = nodes.get(meta.diagram);
+    if (owner === undefined || owner.kind !== "diagram" || !owner.root.groupIds.some((g) => entry.root.groupIds.includes(g))) continue;
+    entry.diagram = owner.id;
+    owner.extent = [...owner.extent, ...entry.elements];
   }
   return nodes;
 }
@@ -168,6 +201,17 @@ function renamedFrame(el: ExcalidrawElement, title: string): ExcalidrawElement {
 function labelOf(entry: NodeEntry, byId: ReadonlyMap<string, ExcalidrawElement>): string {
   const textOf = (el: ExcalidrawElement | undefined): string => (el !== undefined && el.type === "text" ? el.originalText || el.text : "");
   const root = entry.root;
+  const meta = entry.meta;
+  if (meta !== null && meta.kind === "member") {
+    // The full label, unless the user rewrote what the node shows.
+    const bound = (root.boundElements ?? []).find((b) => b.type === "text");
+    const shown = bound !== undefined ? textOf(byId.get(bound.id)) : textOf(entry.elements.find((el) => el.type === "text" && el.id !== root.id));
+    return normalizeText(shown) === normalizeText(meta.shown) ? meta.label : shown;
+  }
+  if (meta !== null && meta.kind === "diagram" && meta.spec !== undefined) {
+    const shown = textOf(root);
+    return normalizeText(shown) === normalizeText(meta.spec.title) ? meta.spec.title : shown;
+  }
   if (root.type === "frame" || root.type === "magicframe") return frameTitle(root);
   if (root.type === "text") return textOf(root);
   const bound = (root.boundElements ?? []).find((b) => b.type === "text");
@@ -185,7 +229,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let lastPlaced: NodeId | null = null;
   let followTimer: number | null = null;
   /** Elements the camera should show after the next follow: the new item, and nearby context when it fits. */
-  const pendingFollow = { core: new Set<string>(), context: new Set<string>() };
+  const pendingFollow = { core: new Set<string>(), context: new Set<string>(), wide: false };
   /** Dormant frames that got their first child in the current transaction; they fade in after commit. */
   const woken = new Set<string>();
 
@@ -253,7 +297,15 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     });
   }
 
-  function commit(tx: Tx, capture: "undoable" | "silent" = "undoable") {
+  type CommitOptions = {
+    /** Fade out what this change deleted instead of letting it blink away. */
+    ghosts?: boolean;
+    /** Copies of elements deleted a moment ago that come back under the same id; they glide from there. */
+    revived?: readonly ExcalidrawElement[];
+    glideMs?: number;
+  };
+
+  function commit(tx: Tx, capture: "undoable" | "silent" = "undoable", options: CommitOptions = {}) {
     settle(tx);
     rerouteAgentEdges(tx);
     liftHiddenLabels(tx);
@@ -264,7 +316,11 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       captureUpdate: capture === "undoable" ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
     });
     // Things this change pushed aside, frames that grew and re-aimed arrows glide to their new spot.
-    animator.glideFrom(before);
+    animator.glideFrom(before, options.revived ?? [], options.glideMs);
+    if (options.ghosts === true) {
+      const gone = new Set(tx.elements.filter((el) => el.isDeleted).map((el) => el.id));
+      animator.fadeOutCopies(before.filter((el) => !el.isDeleted && gone.has(el.id) && !isGhost(el) && readMeta(el)?.kind !== "pending"));
+    }
     if (woken.size > 0) {
       const frames = api.getSceneElements().filter((el) => woken.has(el.id));
       woken.clear();
@@ -275,13 +331,13 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   // ---- Geometry helpers -------------------------------------------------------------------------
 
   function nodeRect(entry: NodeEntry): Rect | null {
-    return boundsOf(entry.kind === "frame" ? [entry.root] : entry.elements);
+    return boundsOf(entry.kind === "frame" ? [entry.root] : entry.extent);
   }
 
   function obstacles(tx: Tx, exclude: ReadonlySet<string>): Rect[] {
     const rects: Rect[] = [];
     for (const el of tx.elements) {
-      if (el.isDeleted || exclude.has(el.id) || el.frameId !== null || el.type === "arrow") continue;
+      if (el.isDeleted || exclude.has(el.id) || el.frameId !== null || el.type === "arrow" || isGhost(el)) continue;
       if (containerIdOf(el) !== null) continue;
       const r = boundsOf([el]);
       if (r !== null) rects.push(el.type === "frame" || el.type === "magicframe" ? withTitle(r) : r);
@@ -487,8 +543,15 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const order = (key: string, rootId: string) => placedOrder.get(key) ?? (index.get(rootId) ?? 0) - 1e6;
     const out: BlockInfo[] = [];
     for (const entry of nodes.values()) {
-      if (entry.kind === "edge" || entry.root.frameId !== null) continue;
+      if (entry.kind === "edge" || entry.root.frameId !== null || entry.diagram !== null) continue;
       const movable = entry.meta !== null;
+      if (entry.kind === "diagram") {
+        const rect = nodeRect(entry);
+        if (rect === null) continue;
+        const members = [...nodes.values()].filter((n) => n.diagram === entry.id).map((n) => n.id);
+        out.push({ block: { key: entry.id, rect, movable, order: order(entry.id, entry.root.id) }, elementIds: entry.extent.map((el) => el.id), nodeIds: [entry.id, ...members] });
+        continue;
+      }
       if (entry.kind === "frame") {
         const inside = live.filter((el) => el.frameId === entry.root.id);
         const frameRect = boundsOf([entry.root]);
@@ -536,7 +599,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const nodes = indexNodes(tx.elements);
     const solids: { rect: Rect }[] = [];
     for (const entry of nodes.values()) {
-      if (entry.kind === "edge" || entry.kind === "frame") continue;
+      if (entry.kind === "edge" || entry.kind === "frame" || entry.kind === "diagram") continue;
       const rect = nodeRect(entry);
       if (rect !== null) solids.push({ rect });
     }
@@ -603,8 +666,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   /** Edge-to-edge line between two nodes, routed around other nodes and around other edges' labels and lines. */
   function edgeRoute(args: { nodes: ReadonlyMap<NodeId, NodeEntry>; self: NodeId; from: NodeEntry; to: NodeEntry; label: Size; drawn: Route | null }): Route | null {
     const { nodes, self, from, to, label } = args;
-    const a = nodeRect(from.kind === "mockup" || from.kind === "image" ? { ...from, elements: [from.root] } : from);
-    const b = nodeRect(to.kind === "mockup" || to.kind === "image" ? { ...to, elements: [to.root] } : to);
+    const a = nodeRect(from.kind === "mockup" || from.kind === "image" ? { ...from, extent: [from.root] } : from);
+    const b = nodeRect(to.kind === "mockup" || to.kind === "image" ? { ...to, extent: [to.root] } : to);
     if (a === null || b === null) return null;
     const ends = (bend: Point | null) => ({
       start: edgePoint({ rect: a, outline: outlineOf(from.root), toward: bend ?? center(b), gap: EDGE_GAP }),
@@ -612,7 +675,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     });
     const solids: Rect[] = [];
     for (const entry of nodes.values()) {
-      if (entry.kind === "edge" || entry.kind === "frame" || entry.id === from.id || entry.id === to.id) continue;
+      if (entry.kind === "edge" || entry.kind === "frame" || entry.kind === "diagram" || entry.id === from.id || entry.id === to.id) continue;
       const rect = nodeRect(entry);
       if (rect !== null) solids.push(inflate(rect, 12));
     }
@@ -656,6 +719,11 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     return arrowGeometry({ x: start.x, y: start.y, dx: end.x - start.x, dy: end.y - start.y, via });
   }
 
+  /** Arrows bind to shapes, text and images; a funnel band is a line, which Excalidraw cannot bind to. */
+  function bindingTo(entry: NodeEntry) {
+    return entry.root.type === "line" || entry.root.type === "arrow" || entry.root.type === "freedraw" ? null : { elementId: entry.root.id, focus: 0, gap: EDGE_GAP };
+  }
+
   function addEdge(tx: Tx, op: Extract<BoardOp, { op: "add_edge" }>): ExcalidrawElement[] {
     const nodes = indexNodes(tx.elements);
     const from = nodes.get(op.from);
@@ -680,8 +748,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         ? {
             ...el,
             ...geometry,
-            startBinding: { elementId: from.root.id, focus: 0, gap: EDGE_GAP },
-            endBinding: { elementId: to.root.id, focus: 0, gap: EDGE_GAP },
+            startBinding: bindingTo(from),
+            endBinding: bindingTo(to),
           }
         : el,
     );
@@ -719,8 +787,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         el.type === "arrow"
           ? newElementWith(el, {
               ...geometry,
-              startBinding: { elementId: from.root.id, focus: 0, gap: EDGE_GAP },
-              endBinding: { elementId: to.root.id, focus: 0, gap: EDGE_GAP },
+              startBinding: bindingTo(from),
+              endBinding: bindingTo(to),
             })
           : el,
       );
@@ -760,7 +828,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     return [from, to].flatMap((id) => nodes.get(id)?.elements.map((el) => el.id) ?? []);
   }
 
-  function scheduleFollow(core: readonly ExcalidrawElement[], context: readonly string[] = []) {
+  /** `wide` lets the zoom go lower than usual, so a whole diagram fits instead of a slice of it. */
+  function scheduleFollow(core: readonly ExcalidrawElement[], context: readonly string[] = [], wide = false) {
+    if (wide) pendingFollow.wide = true;
     for (const el of core) pendingFollow.core.add(el.id);
     for (const id of context) pendingFollow.context.add(id);
     if (followTimer !== null) window.clearTimeout(followTimer);
@@ -800,12 +870,15 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const scene = animator.finalGeometry(api.getSceneElements());
     const core = scene.filter((el) => pendingFollow.core.has(el.id));
     const context = scene.filter((el) => pendingFollow.context.has(el.id));
+    const wide = pendingFollow.wide;
     pendingFollow.core.clear();
     pendingFollow.context.clear();
+    pendingFollow.wide = false;
     const itemRect = boundsOf(core);
     if (itemRect === null) return;
     const state = api.getAppState();
-    const limits = followZoom(state.width);
+    const base0 = followZoom(state.width);
+    const limits = wide ? { ...base0, floor: state.width <= 730 ? 0.22 : 0.4 } : base0;
     const insets = chromeInsets(state.width);
     const screenW = state.width - insets.left - insets.right;
     const screenH = state.height - insets.top - insets.bottom;
@@ -896,6 +969,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       if (entry === undefined || doomed.has(id)) return;
       doomed.add(id);
       for (const el of entry.elements) out.add(el.id);
+      if (entry.kind === "diagram") for (const member of nodes.values()) if (member.diagram === id) visit(member.id);
       if (entry.kind === "frame") {
         for (const el of tx.elements) {
           if (el.frameId !== entry.root.id || el.isDeleted) continue;
@@ -943,7 +1017,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const spot = existing === undefined || existing.kind === "frame" ? null : nodeRect(existing);
     const keep = spot === null || existing === undefined ? null : { at: { x: spot.x, y: spot.y }, frameId: existing.root.frameId };
     if (existing !== undefined) {
-      remove(tx, new Set(existing.elements.map((el) => el.id)));
+      remove(tx, new Set(existing.extent.map((el) => el.id)));
       if (existing.kind === "frame") releaseChildren(tx, existing.root.id);
     }
     const id = ids(op.id);
@@ -1050,6 +1124,22 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const meta = entry.meta;
     const byId = new Map(tx.elements.map((el) => [el.id, el]));
 
+    // Diagram nodes and diagrams re-lay out, since a longer label can change every position.
+    if (entry.diagram !== null || entry.kind === "diagram") {
+      const diagramId = entry.diagram ?? entry.id;
+      const laid = reshape(tx, diagramId, null, (spec) =>
+        entry.kind === "diagram"
+          ? { ...spec, title: op.label ?? spec.title, nodes: op.color === undefined ? spec.nodes : spec.nodes.map((n) => ({ ...n, color: op.color ?? n.color })) }
+          : { ...spec, nodes: spec.nodes.map((n) => (n.id === op.id ? { ...n, label: op.label ?? n.label, color: op.color ?? n.color } : n)) },
+      );
+      if (laid === null) return;
+      commit(tx, "undoable", { ghosts: true });
+      playEntry(laid);
+      // A longer label can grow the diagram past the screen edge; keep the whole of it in view.
+      scheduleFollow(api.getSceneElements().filter((el) => laid.elementIds.has(el.id)), [], true);
+      return;
+    }
+
     if (meta !== null && meta.kind === "shape") {
       // Rebuild at the same spot, keeping the root id so edges stay bound.
       const label = op.label ?? labelOf(entry, byId);
@@ -1106,42 +1196,297 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   function move(op: Extract<BoardOp, { op: "move" }>) {
     const tx = begin();
-    const entry = liveEntry(tx, op.id);
+    const nodes = indexNodes(tx.elements);
+    const asked = nodes.get(op.id);
+    // A diagram's node moves with the whole diagram.
+    const entry = asked !== undefined && asked.diagram !== null ? nodes.get(asked.diagram) : asked;
     if (entry === undefined || entry.kind === "edge") return;
-    if (op.placement.kind === "inside" && op.placement.frame === op.id) return;
-    if (op.placement.kind === "near" && op.placement.target === op.id) return;
+    const placement = entry.kind === "diagram" ? diagramPlacement(nodes, entry.id, op.placement) : op.placement;
+    if (placement.kind === "inside" && placement.frame === entry.id) return;
+    if (placement.kind === "near" && placement.target === entry.id) return;
     const children = entry.kind === "frame" ? tx.elements.filter((el) => el.frameId === entry.root.id && !el.isDeleted) : [];
-    const moving = [...entry.elements, ...children];
+    const moving = [...entry.extent, ...children];
     const own = new Set(moving.map((el) => el.id));
     const rect = nodeRect(entry);
     if (rect === null) return;
-    const { at, frame } = resolve(tx, op.placement, { w: rect.w, h: rect.h }, own);
+    const { at, frame } = resolve(tx, placement, { w: rect.w, h: rect.h }, own);
     const dx = at.x - rect.x;
     const dy = at.y - rect.y;
-    const nextFrameId = entry.kind === "frame" ? null : (frame?.element.id ?? null);
+    const nextFrameId = entry.kind === "frame" || entry.kind === "diagram" ? null : (frame?.element.id ?? null);
     for (const el of moving) {
       patch(tx, el.id, (current) => {
         const moved = translate(current, dx, dy);
         return entry.elements.includes(el) && entry.kind !== "frame" ? newElementWith(moved, { frameId: nextFrameId }) : moved;
       });
     }
-    if (frame !== null) refitFrame(tx, frame.element.id);
+    if (frame !== null && nextFrameId !== null) refitFrame(tx, frame.element.id);
     if (entry.root.frameId !== null && entry.root.frameId !== nextFrameId) refitFrame(tx, entry.root.frameId);
-    const touched = new Set<NodeId>([op.id]);
-    const nodes = indexNodes(tx.elements);
+    const touched = new Set<NodeId>([entry.id]);
+    const after = indexNodes(tx.elements);
     for (const child of children) {
-      const id = nodeIdForElement(nodes, child.id);
+      const id = nodeIdForElement(after, child.id);
       if (id !== null) touched.add(id);
     }
+    for (const member of after.values()) if (member.diagram === entry.id) touched.add(member.id);
     reroute(tx, touched);
     // A moved block counts as the newest, so it is the one that steps aside if it lands on something.
-    markPlaced(op.id);
+    markPlaced(entry.id);
     commit(tx);
-    lastPlaced = op.id;
+    lastPlaced = entry.id;
     const placed = tx.elements.filter((el) => own.has(el.id));
     const bounds = boundsOf(placed);
     if (bounds !== null) animator.pointAt(restingPoint(bounds), []);
     scheduleFollow(placed);
+  }
+
+  // ---- Diagrams -------------------------------------------------------------------------------
+
+  const measure = excalidrawMeasure();
+
+  /**
+   * Nodes deleted in the last moment. A refine deletes loose boxes and then draws a diagram that reuses some of their
+   * ids; those come back under their old element ids and glide from where they were, so the change reads as the boxes
+   * rearranging themselves rather than a blink.
+   */
+  type Departed = { elements: ExcalidrawElement[]; rect: Rect; at: number };
+  const departed = new Map<NodeId, Departed>();
+  const REFINE_WINDOW_MS = 4000;
+
+  function freshDeparted(id: NodeId): Departed | undefined {
+    const d = departed.get(id);
+    if (d !== undefined && performance.now() - d.at > REFINE_WINDOW_MS) {
+      departed.delete(id);
+      return undefined;
+    }
+    return d;
+  }
+
+  function rememberDeparted(nodes: ReadonlyMap<NodeId, NodeEntry>, doomed: ReadonlySet<string>) {
+    const now = performance.now();
+    for (const entry of nodes.values()) {
+      if ((entry.kind !== "shape" && entry.kind !== "member") || entry.meta === null || !doomed.has(entry.root.id)) continue;
+      const rect = nodeRect(entry);
+      if (rect !== null) departed.set(entry.id, { elements: entry.elements.map((el) => ({ ...el })), rect, at: now });
+    }
+  }
+
+  /** Outline and label element ids of a node, so a diagram can take it over without changing identity. */
+  function partIds(elements: readonly ExcalidrawElement[], fallback: string): { root: string; text: string } {
+    const root = elements.find((el) => readMeta(el)?.role === "root") ?? elements[0];
+    const text = elements.find((el) => el.type === "text" && el.id !== root?.id);
+    return { root: root?.id ?? `${fallback}~root`, text: text?.id ?? `${fallback}~text` };
+  }
+
+  /** The spec a diagram was last drawn from, brought up to date with what is on the board now. */
+  function currentSpec(tx: Tx, nodes: ReadonlyMap<NodeId, NodeEntry>, diagram: NodeEntry): DiagramSpec | null {
+    const meta = diagram.meta;
+    if (meta === null || meta.kind !== "diagram" || meta.spec === undefined) return null;
+    const byId = new Map(tx.elements.map((el) => [el.id, el]));
+    const parentOf = new Map(meta.spec.nodes.map((n) => [n.id, n.parent]));
+    const live = meta.spec.nodes.flatMap((n) => {
+      const entry = nodes.get(n.id);
+      const m = entry?.meta ?? null;
+      if (entry === undefined || entry.diagram !== diagram.id || m === null || m.kind !== "member") return [];
+      return [{ ...n, label: labelOf(entry, byId), color: m.color }];
+    });
+    const ids = new Set(live.map((n) => n.id));
+    // A node whose parent went away hangs from its grandparent instead.
+    const parentAmong = (id: NodeId | null): NodeId | null => {
+      const seen = new Set<NodeId>();
+      let p = id;
+      while (p !== null && !ids.has(p) && !seen.has(p)) {
+        seen.add(p);
+        p = parentOf.get(p) ?? null;
+      }
+      return p !== null && ids.has(p) ? p : null;
+    };
+    return {
+      ...meta.spec,
+      title: labelOf(diagram, byId),
+      nodes: live.map((n) => ({ ...n, parent: parentAmong(n.parent) })),
+      links: meta.spec.links.filter((l) => ids.has(l.from) && ids.has(l.to)),
+    };
+  }
+
+  /** Diagrams never go inside frames; next to the frame instead. Near one of its own nodes means near the diagram. */
+  function diagramPlacement(nodes: ReadonlyMap<NodeId, NodeEntry>, self: NodeId, placement: Placement): Placement {
+    if (placement.kind === "inside") return placement.frame === self ? { kind: "auto" } : { kind: "near", target: placement.frame, direction: "right" };
+    if (placement.kind !== "near") return placement;
+    const target = nodes.get(placement.target);
+    if (target === undefined || placement.target === self || target.diagram === self) return { kind: "auto" };
+    if (target.diagram !== null) return { ...placement, target: target.diagram };
+    const frame = target.root.frameId === null ? null : nodeIdForElement(nodes, target.root.frameId);
+    return frame === null ? placement : { ...placement, target: frame };
+  }
+
+  type Laid = { elementIds: Set<string>; titleId: string; steps: EntryStep[]; fresh: Set<string>; revived: ExcalidrawElement[] };
+
+  /**
+   * Lays out and (re)builds a diagram inside a transaction. Nodes that already exist under the same id, in this
+   * diagram, loose on the board, or deleted a moment ago, keep their element ids, so they glide and stay bound to
+   * outside arrows. Everything the old drawing had that the new one lacks is removed.
+   */
+  function layDiagram(tx: Tx, diagramId: NodeId, spec: DiagramSpec, where: { kind: "at"; at: Point } | { kind: "place"; placement: Placement }): Laid {
+    const nodes = indexNodes(tx.elements);
+    const liveBefore = new Set(tx.elements.filter(isLive).map((el) => el.id));
+    const old = nodes.get(diagramId);
+    const oldMeta = old?.meta ?? null;
+    const stamp = oldMeta !== null && oldMeta.kind === "diagram" ? oldMeta.stamp : `${Date.now().toString(36)}${(seq++).toString(36)}`;
+    const groupId = (old?.kind === "diagram" ? old.root.groupIds[0] : undefined) ?? `${diagramId}~${stamp}~group`;
+    const taken = new Set<string>(old?.kind === "diagram" ? old.extent.map((el) => el.id) : []);
+    const memberIds = new Map<NodeId, { root: string; text: string }>();
+    const anchors: Rect[] = [];
+    const revived: ExcalidrawElement[] = [];
+    const oldMembers = [...nodes.values()].filter((n) => n.diagram === diagramId).map((n) => n.id);
+
+    for (const n of spec.nodes) {
+      const entry = nodes.get(n.id);
+      const fallback = `${n.id}~${stamp}`;
+      if (entry !== undefined && entry.diagram === diagramId) {
+        memberIds.set(n.id, partIds(entry.elements, fallback));
+        continue;
+      }
+      if (entry !== undefined && (entry.kind === "shape" || entry.kind === "member") && entry.meta !== null) {
+        // A loose box the diagram folds in travels from where it sat.
+        memberIds.set(n.id, partIds(entry.elements, fallback));
+        for (const el of entry.elements) taken.add(el.id);
+        const r = nodeRect(entry);
+        if (r !== null) anchors.push(r);
+        continue;
+      }
+      const gone = entry === undefined ? freshDeparted(n.id) : undefined;
+      if (gone !== undefined) {
+        memberIds.set(n.id, partIds(gone.elements, fallback));
+        revived.push(...gone.elements);
+        anchors.push(gone.rect);
+        departed.delete(n.id);
+      }
+    }
+    remove(tx, taken);
+
+    const ids: DiagramIds = {
+      part: (key) => `${diagramId}~${stamp}~${key}`,
+      member: (id) => {
+        const known = memberIds.get(id);
+        if (known !== undefined) return known;
+        const made = { root: `${id}~${stamp}~root`, text: `${id}~${stamp}~text` };
+        memberIds.set(id, made);
+        return made;
+      },
+    };
+    const layout = layoutDiagram(spec, measure);
+    const built = buildDiagram({ diagramId, stamp, spec, layout, ids, groupId });
+    const bounds = boundsOf(built.elements) ?? { x: 0, y: 0, w: 0, h: 0 };
+
+    let at: Point;
+    if (where.kind === "at") at = where.at;
+    else {
+      const placement = diagramPlacement(nodes, diagramId, where.placement);
+      const size = { w: bounds.w, h: bounds.h };
+      const anchor = union(anchors);
+      if (placement.kind === "auto" && anchor !== null) {
+        // Over the boxes it replaces, nodes roughly where they were, the title just above.
+        const titleRoom = layout.title.inside ? 0 : layout.title.rect.h + 30;
+        at = nearestFree({ size, preferred: { x: anchor.x, y: anchor.y - titleRoom }, obstacles: obstacles(tx, new Set()) });
+      } else at = resolve(tx, placement, size, new Set()).at;
+    }
+    const dx = at.x - bounds.x;
+    const dy = at.y - bounds.y;
+    const previous = new Map(tx.elements.map((el) => [el.id, el]));
+    const placed = built.elements.map((el) => {
+      const moved = { ...el, x: el.x + dx, y: el.y + dy };
+      const prior = previous.get(el.id);
+      return prior === undefined ? moved : { ...moved, version: prior.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) };
+    });
+    const placedIds = new Set(placed.map((el) => el.id));
+    tx.elements = [...tx.elements.filter((el) => !placedIds.has(el.id)), ...placed];
+
+    // Outside arrows to nodes that left the diagram go with them; the rest re-aim at the new spots.
+    const kept = new Set(spec.nodes.map((n) => n.id));
+    const dropped = new Set(oldMembers.filter((id) => !kept.has(id)));
+    if (dropped.size > 0) {
+      const edges = new Set<string>();
+      for (const entry of indexNodes(tx.elements).values()) {
+        const m = entry.meta;
+        if (m !== null && m.kind === "edge" && (dropped.has(m.from) || dropped.has(m.to))) for (const el of entry.elements) edges.add(el.id);
+      }
+      remove(tx, edges);
+    }
+    reroute(tx, new Set([diagramId, ...kept]));
+    if (old === undefined) markPlaced(diagramId);
+    else if (!placedOrder.has(diagramId)) placedOrder.set(diagramId, -2e6);
+
+    const revivedIds = new Set(revived.map((el) => el.id));
+    const fresh = new Set([...placedIds].filter((id) => !liveBefore.has(id) && !revivedIds.has(id)));
+    return { elementIds: placedIds, titleId: ids.part("title"), steps: built.steps, fresh, revived };
+  }
+
+  /** Re-lays a diagram where it stands after `edit` changes its spec. Removes it when no nodes are left. */
+  function reshape(tx: Tx, diagramId: NodeId, at: Point | null, edit: (spec: DiagramSpec) => DiagramSpec): Laid | null {
+    const nodes = indexNodes(tx.elements);
+    const diagram = nodes.get(diagramId);
+    if (diagram === undefined || diagram.kind !== "diagram") return null;
+    const spec = currentSpec(tx, nodes, diagram);
+    if (spec === null) return null;
+    const next = edit(spec);
+    if (next.nodes.length === 0) {
+      remove(tx, new Set(diagram.extent.map((el) => el.id)));
+      return null;
+    }
+    const rect = nodeRect(diagram);
+    const spot = at ?? (rect === null ? null : { x: rect.x, y: rect.y });
+    return layDiagram(tx, diagramId, next, spot === null ? { kind: "place", placement: { kind: "auto" } } : { kind: "at", at: spot });
+  }
+
+  /** Nodes appear one after another; each connector draws itself once both of its ends are showing. */
+  function playEntry(laid: Laid) {
+    const nodeSteps = laid.steps.filter((s) => s.node !== null && s.elementIds.some((id) => laid.fresh.has(id)));
+    const stagger = Math.max(55, Math.min(110, 1000 / Math.max(1, nodeSteps.length)));
+    const nodeDelay = new Map<NodeId, number>();
+    for (const [i, step] of nodeSteps.entries()) if (step.node !== null) nodeDelay.set(step.node, 140 + i * stagger);
+    const plan = laid.steps.flatMap((step) => {
+      const elementIds = step.elementIds.filter((id) => laid.fresh.has(id));
+      if (elementIds.length === 0) return [];
+      const delay =
+        step.node !== null
+          ? (nodeDelay.get(step.node) ?? 0)
+          : step.after.length > 0
+            ? Math.max(0, ...step.after.map((id) => nodeDelay.get(id) ?? 0)) + 220
+            : step.kind === "draw"
+              ? 60
+              : 0;
+      return [{ elementIds, delay, draw: step.kind === "draw" }];
+    });
+    animator.enter(plan);
+  }
+
+  function addDiagram(op: Extract<BoardOp, { op: "add_diagram" }>) {
+    const seen = new Set<NodeId>();
+    const nodes = op.nodes.filter((n) => n.id !== op.id && !seen.has(n.id) && seen.add(n.id));
+    if (nodes.length === 0) return;
+    const spec: DiagramSpec = { kind: op.kind, title: op.title, nodes, links: op.links, axes: op.axes };
+    // Nodes deleted a moment ago that come straight back: their fading copies go, the originals glide instead.
+    animator.dropGhosts(new Set(nodes.flatMap((n) => freshDeparted(n.id)?.elements.map((el) => el.id) ?? [])));
+    const tx = begin();
+    const existing = liveEntry(tx, op.id);
+    let where: Parameters<typeof layDiagram>[3] = { kind: "place", placement: op.placement };
+    if (existing !== undefined) {
+      const rect = nodeRect(existing);
+      if (rect !== null) where = { kind: "at", at: { x: rect.x, y: rect.y } };
+      if (existing.kind !== "diagram") {
+        remove(tx, new Set(existing.extent.map((el) => el.id)));
+        if (existing.kind === "frame") releaseChildren(tx, existing.root.id);
+      }
+    }
+    const laid = layDiagram(tx, op.id, spec, where);
+    const transforming = laid.revived.length > 0 || existing !== undefined;
+    commit(tx, "undoable", { ghosts: true, revived: laid.revived, glideMs: transforming ? 560 : undefined });
+    lastPlaced = op.id;
+    playEntry(laid);
+    const placed = api.getSceneElements().filter((el) => laid.elementIds.has(el.id));
+    const rect = boundsOf(animator.finalGeometry(placed));
+    if (rect !== null) animator.pointAt(restingPoint(rect), [laid.titleId]);
+    scheduleFollow(placed, [], true);
   }
 
   function apply(op: BoardOp) {
@@ -1151,6 +1496,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       case "add_mockup":
       case "add_image":
         addNode(op);
+        return;
+      case "add_diagram":
+        addDiagram(op);
         return;
       case "add_edge": {
         const tx = begin();
@@ -1170,10 +1518,24 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         return;
       case "delete": {
         const tx = begin();
+        const nodes = indexNodes(tx.elements);
+        const asked = new Set(op.ids);
+        // Diagrams losing some of their nodes re-lay where they stand.
+        const shrinking = new Map<NodeId, Point | null>();
+        for (const id of op.ids) {
+          const diagramId = nodes.get(id)?.diagram ?? null;
+          if (diagramId === null || asked.has(diagramId)) continue;
+          const diagram = nodes.get(diagramId);
+          const rect = diagram === undefined ? null : nodeRect(diagram);
+          shrinking.set(diagramId, rect === null ? null : { x: rect.x, y: rect.y });
+        }
         const doomed = deletionSet(tx, op.ids);
         if (doomed.size === 0) return;
+        rememberDeparted(nodes, doomed);
         remove(tx, doomed);
-        commit(tx);
+        const relaid = [...shrinking].flatMap(([diagramId, at]) => reshape(tx, diagramId, at, (spec) => spec) ?? []);
+        commit(tx, "undoable", { ghosts: true, glideMs: 460 });
+        for (const laid of relaid) playEntry(laid);
         if (lastPlaced !== null && op.ids.includes(lastPlaced)) lastPlaced = null;
         return;
       }
@@ -1183,7 +1545,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       case "clear": {
         const tx = begin();
         remove(tx, new Set(tx.elements.map((el) => el.id)));
-        commit(tx);
+        commit(tx, "undoable", { ghosts: true });
         lastPlaced = null;
         return;
       }
@@ -1218,6 +1580,11 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       }
       // User shapes only matter to the agent when they say something.
       if (entry.meta === null && entry.kind === "shape" && label.length === 0) continue;
+      // Diagram nodes are shapes inside their diagram, so the agent can update, link or delete them one by one.
+      if (entry.kind === "member") {
+        items.push({ id: entry.id, kind: "shape", label, frame: entry.diagram, link: "" });
+        continue;
+      }
       items.push({ id: entry.id, kind: entry.kind, label, frame, link: "" });
     }
 
