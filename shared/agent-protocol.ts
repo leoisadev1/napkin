@@ -9,8 +9,13 @@ export const ChatTurn = z.object({
 export type ChatTurn = z.infer<typeof ChatTurn>;
 
 export const AgentRequest = z.object({
-  /** What the user just said (final transcript of the turn) or typed. */
+  /** What the user just said (a live phrase while they are still talking, or a full turn) or typed. */
   utterance: z.string().min(1).max(4000),
+  /**
+   * "live": a phrase streamed while the user keeps talking; draw only what this phrase adds, fast, no reply.
+   * "turn": an explicit typed message or a tapped suggestion.
+   */
+  mode: z.enum(["live", "turn"]),
   /** Recent conversation, oldest first, at most 20 turns. */
   history: z.array(ChatTurn).max(20),
   board: BoardSummary,
@@ -18,8 +23,10 @@ export const AgentRequest = z.object({
 export type AgentRequest = z.infer<typeof AgentRequest>;
 
 export const AgentEvent = z.discriminatedUnion("type", [
-  /** A chunk of the short spoken reply. Concatenate in order; the client streams it to TTS. */
+  /** Optional short reply text. Not spoken by default; the UI may show it quietly. */
   z.object({ type: z.literal("say"), text: z.string() }),
+  /** 0-3 short next-step ideas (max ~48 chars each) the user can tap to send as a turn. Replaces previous suggestions. */
+  z.object({ type: z.literal("suggestions"), items: z.array(z.string().min(1).max(60)).max(3) }),
   /** One validated board operation, applied immediately in arrival order. */
   z.object({ type: z.literal("op"), op: BoardOp }),
   /** Long-running work started (for example image generation) so the UI can show a placeholder. */

@@ -32,6 +32,12 @@ export interface BoardBridge {
 
 export interface Conversation {
   phase: ConversationPhase;
+  /** True while the agent is drawing. Independent of phase: the user can keep talking while it sketches. */
+  sketching: boolean;
+  /** Current tappable next-step ideas from the agent (0-3). */
+  suggestions: string[];
+  /** Send a suggestion as a user turn and clear the chips. */
+  pickSuggestion(text: string): void;
   /** Final and in-progress turns, oldest first. */
   transcript: TranscriptEntry[];
   /** Live partial transcript of what the user is saying right now, or "". */
