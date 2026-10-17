@@ -142,9 +142,45 @@ export function boundTextRoom(shape: DiagramNode["shape"], size: { w: number; h:
 
 type Sized = { node: DiagramNode; shape: DiagramNode["shape"]; text: TextBox; w: number; h: number; color: Color };
 
-function sizeNode(measure: Measure, node: DiagramNode, opts: { size?: number; maxWidth?: number; shape?: DiagramNode["shape"]; color?: Color } = {}): Sized {
-  const shape = opts.shape ?? node.shape;
-  const text = textBox(measure, node.label, opts.size ?? NODE_FONT, opts.maxWidth ?? 170);
+export function lineCount(text: string): number {
+  return text.split("\n").length;
+}
+
+/**
+ * Wraps a label wider before taller: the narrowest width from `minWidth` up to `maxWidth` that keeps it within a
+ * tier's line budget, trying tiers in order (fewest lines at the full font first, then a step smaller font).
+ */
+export function fitLabel(measure: Measure, label: string, opts: { minWidth: number; maxWidth: number; tiers: readonly { size: number; lines: number }[] }): TextBox {
+  for (const tier of opts.tiers) {
+    for (let w = opts.minWidth; w <= opts.maxWidth; w += 10) {
+      const box = textBox(measure, label, tier.size, w);
+      if (lineCount(box.text) <= tier.lines) return box;
+    }
+  }
+  const last = opts.tiers[opts.tiers.length - 1];
+  return textBox(measure, label, last?.size ?? NODE_FONT, opts.maxWidth);
+}
+
+/** An ellipse holding more than this many lines turns into a tall egg; a rounded box reads better. */
+const ELLIPSE_MAX_LINES = 3;
+
+function sizeNode(measure: Measure, node: DiagramNode, opts: { size?: number; maxWidth?: number; grow?: number; shape?: DiagramNode["shape"]; color?: Color } = {}): Sized {
+  const size = opts.size ?? NODE_FONT;
+  const minWidth = opts.maxWidth ?? 170;
+  // Long labels widen the node first (diamonds less, since only half their width holds text), then drop a font step.
+  const wanted = opts.shape ?? node.shape;
+  const maxWidth = opts.grow ?? minWidth + (wanted === "diamond" ? 40 : 80);
+  const text = fitLabel(measure, node.label, {
+    minWidth,
+    maxWidth,
+    tiers: [
+      { size, lines: 3 },
+      { size, lines: 4 },
+      { size: size - 2, lines: 4 },
+      { size: size - 3, lines: 5 },
+    ],
+  });
+  const shape = wanted === "ellipse" && lineCount(text.text) > ELLIPSE_MAX_LINES ? "box" : wanted;
   const s = shapeSize(shape, text.rect);
   return { node, shape, text, w: Math.ceil(s.w), h: Math.ceil(s.h), color: opts.color ?? node.color };
 }
@@ -673,6 +709,49 @@ function layoutTree(measure: Measure, spec: DiagramSpec): DiagramLayout {
 
 // ---- Mindmap ------------------------------------------------------------------------------------
 
+/** Widest a mindmap's center may grow before its label wraps further and then shrinks a font step. */
+const CENTER_MAX_W = 320;
+
+/**
+ * The center grows with its label. A short one sits in an ellipse; a long one gets a rounded box (an ellipse would
+ * have to be a tall egg to hold it) that widens up to CENTER_MAX_W, wraps to at most four lines, then shrinks.
+ */
+function sizeCenter(measure: Measure, node: DiagramNode): Sized {
+  const short = fitLabel(measure, node.label, { minWidth: 150, maxWidth: 200, tiers: [{ size: 26, lines: 2 }] });
+  if (lineCount(short.text) <= 2) {
+    const s = shapeSize("ellipse", short.rect);
+    // Never rounder than about 4:3, so it reads as the hub rather than a ball.
+    const h = Math.ceil(s.h);
+    return { node, shape: "ellipse", text: short, w: Math.ceil(Math.max(s.w, h * 1.35)), h, color: node.color };
+  }
+  const text = fitLabel(measure, node.label, {
+    minWidth: 200,
+    maxWidth: CENTER_MAX_W - 48,
+    tiers: [
+      { size: 26, lines: 3 },
+      { size: 24, lines: 3 },
+      { size: 24, lines: 4 },
+      { size: 22, lines: 4 },
+      { size: 20, lines: 4 },
+      { size: 18, lines: 4 },
+      { size: 16, lines: 5 },
+    ],
+  });
+  const s = shapeSize("box", text.rect);
+  return { node, shape: "box", text, w: Math.ceil(s.w), h: Math.ceil(Math.max(s.h, 96)), color: node.color };
+}
+
+/**
+ * Where a link leaves the center toward `toward` on side `side`: the ellipse outline, or the box's side edge with
+ * the start fanned a little toward the target so sibling links do not all leave from one point.
+ */
+function centerEdge(r: Rect, shape: NodeShape, toward: Point, side: 1 | -1): Point {
+  if (shape === "ellipse") return ellipseEdge(r, toward, GAP_OUT);
+  const c = center(r);
+  const spread = Math.max(-r.h * 0.32, Math.min(r.h * 0.32, (toward.y - c.y) * 0.4));
+  return { x: side === 1 ? r.x + r.w + GAP_OUT : r.x - GAP_OUT, y: c.y + spread };
+}
+
 function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
   const centerNode = spec.nodes.find((n) => n.parent === null) ?? spec.nodes[0];
   if (centerNode === undefined) return finish(measure, spec, { nodes: [], connectors: [], decos: [] });
@@ -697,7 +776,7 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
     sized.set(
       id,
       d === 0
-        ? sizeNode(measure, node, { size: 26, maxWidth: 200, shape: "ellipse" })
+        ? sizeCenter(measure, node)
         : sizeNode(measure, node, { size: d === 1 ? NODE_FONT : 18, maxWidth: d === 1 ? 160 : 150, color: branchColor.get(id) ?? node.color }),
     );
     for (const c of children.get(id) ?? []) size(c, d + 1);
@@ -747,7 +826,7 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     if (Math.abs(dy) < 6) return [a, b];
-    return [a, { x: a.x + dx * 0.3, y: a.y + dy * 0.12 }, { x: a.x + dx * 0.55, y: a.y + dy * 0.75 }, b];
+    return [a, { x: a.x + dx * 0.35, y: a.y + dy * 0.15 }, { x: a.x + dx * 0.65, y: a.y + dy * 0.85 }, b];
   };
 
   const placeSubtree = (id: NodeId, side: 1 | -1, edgeX: number, top: number) => {
@@ -787,7 +866,7 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
       const branch = nodes.find((v) => v.id === b);
       if (branch !== undefined) {
         const end = side === 1 ? midLeft(branch.rect) : midRight(branch.rect);
-        const start = ellipseEdge(centerRect, end, GAP_OUT);
+        const start = centerEdge(centerRect, centerSized.shape, end, side);
         connectors.push({ key: `${centerNode.id}>${b}`, from: centerNode.id, to: b, points: curve(start, end), curved: true, head: "none", color: branch.color, label: null });
       }
       y += h + BLOCK_GAP;

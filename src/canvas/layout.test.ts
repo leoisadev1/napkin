@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { Rect } from "./geometry";
 import { bendAround, inflate, overlaps, segmentHitsRect } from "./geometry";
 import type { Block } from "./layout";
-import { BLOCK_GAP, fitFrame, overlappingPairs, placeInside, settleBlocks } from "./layout";
+import { ALIGN_SNAP, BLOCK_GAP, alignedSpot, besideSpot, fitFrame, overlappingPairs, placeInside, settleBlocks, snapAlign } from "./layout";
 
 const box = { w: 240, h: 76 };
 
@@ -114,5 +114,56 @@ describe("edge routing", () => {
 
   test("keeps clear lines straight", () => {
     expect(bendAround({ start: { x: 0, y: 0 }, end: { x: 400, y: 0 }, obstacles: [{ x: 0, y: 100, w: 50, h: 50 }] })).toBeNull();
+  });
+});
+
+describe("alignment", () => {
+  const diagram: Rect = { x: 0, y: 0, w: 900, h: 420 };
+
+  test("big blocks beside each other share a top edge; stacked ones share a left edge", () => {
+    const size = { w: 300, h: 240 };
+    expect(besideSpot({ size, target: diagram, direction: "right" }).y).toBe(diagram.y);
+    expect(besideSpot({ size, target: diagram, direction: "below" }).x).toBe(diagram.x);
+    // Small things beside small things still center on each other.
+    const small: Rect = { x: 0, y: 0, w: 160, h: 80 };
+    expect(besideSpot({ size: { w: 160, h: 60 }, target: small, direction: "right" }).y).toBe(10);
+  });
+
+  test("snapAlign lines a spot up with a nearby top or left edge when that stays clear", () => {
+    const at = { x: 1020 + 25, y: 30 };
+    const snapped = snapAlign({ size: { w: 300, h: 200 }, at, neighbours: [diagram], obstacles: [diagram] });
+    expect(snapped.y).toBe(diagram.y);
+    // Too far off to count as meant-to-align: left alone.
+    const far = { x: 1100, y: diagram.y + ALIGN_SNAP + 20 };
+    expect(snapAlign({ size: { w: 300, h: 200 }, at: far, neighbours: [diagram], obstacles: [diagram] })).toEqual(far);
+  });
+
+  test("snapAlign never snaps onto something", () => {
+    const blocker: Rect = { x: 1000, y: -120, w: 300, h: 140 };
+    const at = { x: 1000, y: 60 };
+    const snapped = snapAlign({ size: { w: 300, h: 200 }, at, neighbours: [diagram], obstacles: [diagram, blocker] });
+    expect(overlaps(inflate({ ...snapped, w: 300, h: 200 }, 35), blocker)).toBe(false);
+  });
+
+  test("alignedSpot puts a second diagram in a column or row with the first, not scattered", () => {
+    const view: Rect = { x: -100, y: -100, w: 2400, h: 1600 };
+    const at = alignedSpot({ size: { w: 800, h: 360 }, view, blocks: [diagram], prefer: { x: 140, y: 560 }, obstacles: [diagram] });
+    expect(at).not.toBeNull();
+    if (at !== null) expect(at.x === diagram.x || at.y === diagram.y).toBe(true);
+  });
+
+  test("settling a block that steps aside lines it up with its neighbour", () => {
+    const blocks: Block[] = [
+      { key: "first", rect: diagram, movable: true, order: 0 },
+      // Dropped onto the first diagram, a little lower than its top.
+      { key: "second", rect: { x: 500, y: 25, w: 600, h: 300 }, movable: true, order: 1 },
+    ];
+    const moves = settleBlocks({ blocks, ignore: new Set() });
+    const d = moves.get("second");
+    expect(d).toBeDefined();
+    if (d === undefined) return;
+    const moved = { x: 500 + d.x, y: 25 + d.y, w: 600, h: 300 };
+    expect(overlaps(inflate(moved, BLOCK_GAP - 1), diagram)).toBe(false);
+    expect(moved.y === diagram.y || moved.x === diagram.x).toBe(true);
   });
 });

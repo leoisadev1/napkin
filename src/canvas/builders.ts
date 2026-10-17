@@ -6,6 +6,7 @@ import type { ExcalidrawArrowElement, ExcalidrawElement, FileId } from "@excalid
 import type { Color, MockupComponent, ShapeKind } from "../../shared/board";
 import type { NodeMeta } from "./meta";
 import { metaData } from "./meta";
+import { CHAR_WIDTH, stickySize, wrap } from "./text";
 import {
   ACCENT,
   ACCENT_FILL,
@@ -30,30 +31,11 @@ export type IdFactory = (part: string) => string;
 
 const ADAPTIVE = { type: ROUNDNESS.ADAPTIVE_RADIUS };
 
-/** Rough Excalifont advance per character as a fraction of font size; good enough to size containers. */
-const CHAR_WIDTH = 0.56;
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Greedy word wrap for free text, which Excalidraw does not wrap on its own. */
-export function wrap(text: string, maxChars: number): string {
-  const lines: string[] = [];
-  for (const paragraph of text.split("\n")) {
-    let line = "";
-    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-      if (line.length === 0) line = word;
-      else if (line.length + 1 + word.length <= maxChars) line = `${line} ${word}`;
-      else {
-        lines.push(line);
-        line = word;
-      }
-    }
-    lines.push(line);
-  }
-  return lines.join("\n");
-}
+export { wrap };
 
 function finish(skeletons: ExcalidrawElementSkeleton[], meta: (id: string) => NodeMeta, groupIds: string[] = []): ExcalidrawElement[] {
   return convertToExcalidrawElements(skeletons, { regenerateIds: false }).map((el) => ({
@@ -108,7 +90,8 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
           meta,
         ),
       };
-    case "sticky":
+    case "sticky": {
+      const size = stickySize(label);
       return {
         rootId,
         elements: finish(
@@ -116,18 +99,19 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
             {
               ...base,
               type: "rectangle",
-              width: 200,
-              height: 200,
+              width: size.w,
+              height: size.h,
               strokeColor: swatch.stroke,
               strokeWidth: 1,
               backgroundColor: STICKY_FILL[color],
               roundness: null,
-              label: { ...textLabel, fontSize: 20 },
+              label: { ...textLabel, fontSize: size.fontSize },
             },
           ],
           meta,
         ),
       };
+    }
     case "text":
       return {
         rootId,
