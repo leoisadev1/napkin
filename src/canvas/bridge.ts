@@ -2095,6 +2095,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   // ---- Pacing and the partner's cursor ---------------------------------------------------------
 
+  const DORMANT_FRAME_TTL_MS = 10_000;
+  let dormantSweepTimer: number | null = null;
   /** Agent frames that lost every child (contents moved into a diagram, deleted, or moved out) are removed. */
   function sweepEmptyFrames() {
     const tx = begin();
@@ -2102,7 +2104,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     for (const el of tx.elements) if (!el.isDeleted && el.frameId !== null) occupied.add(el.frameId);
     const empty = new Set<string>();
     for (const el of tx.elements) {
-      if (el.isDeleted || el.type !== "frame" || occupied.has(el.id) || isDormantFrame(el)) continue;
+      if (el.isDeleted || el.type !== "frame" || occupied.has(el.id)) continue;
+      // A dormant frame waits briefly for its first child; one that never gets it stops reserving space.
+      if (isDormantFrame(el) && Date.now() - el.updated < DORMANT_FRAME_TTL_MS) continue;
       const meta = readMeta(el);
       if (meta !== null && meta.kind === "frame") empty.add(el.id);
     }
@@ -2111,10 +2115,17 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     commit(tx, "undoable", { ghosts: true });
   }
 
+  const runSweep = guard(() => sweepEmptyFrames(), undefined);
+
   const runSafely = guard((task: PacedTask) => {
     if (task.kind === "op") {
       apply(task.op);
       if (task.op.op !== "add_frame") sweepEmptyFrames();
+      else {
+        // Re-check once the dormant frame's grace period has passed, in case no child ever arrives.
+        if (dormantSweepTimer !== null) window.clearTimeout(dormantSweepTimer);
+        dormantSweepTimer = window.setTimeout(() => { dormantSweepTimer = null; runSweep(); }, DORMANT_FRAME_TTL_MS + 500);
+      }
     } else task.run();
   }, undefined);
   const pacer = createPacer({
@@ -2179,6 +2190,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     },
     dispose() {
       pacer.dispose();
+      if (dormantSweepTimer !== null) window.clearTimeout(dormantSweepTimer);
       if (cameraFrame !== null) cancelAnimationFrame(cameraFrame);
       animator.dispose();
       if (followTimer !== null) window.clearTimeout(followTimer);
