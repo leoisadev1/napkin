@@ -21,12 +21,13 @@ export function TranscriptPanel({ open, entries, onClose }: { open: boolean; ent
         </button>
       </header>
       {entries.length === 0 ? (
-        <p className="transcript-empty">Nothing yet. What you say and what your partner answers will show up here.</p>
+        <p className="transcript-empty">Nothing yet. What you say shows up here.</p>
       ) : (
         <ol className="transcript-list" ref={listRef}>
-          {entries.map((entry) => (
-            <li key={entry.id} className="turn" data-role={entry.role} data-final={entry.final}>
-              <span className="turn-who">{entry.role === "user" ? "You" : "Partner"}</span>
+          {entries.map((entry, index) => (
+            // Live speech arrives as many short phrases; label a run of them once.
+            <li key={entry.id} className="turn" data-role={entry.role} data-final={entry.final} data-continues={entries[index - 1]?.role === entry.role}>
+              {entries[index - 1]?.role !== entry.role && <span className="turn-who">{entry.role === "user" ? "You" : "Partner"}</span>}
               <p className="turn-text">{entry.text}</p>
             </li>
           ))}

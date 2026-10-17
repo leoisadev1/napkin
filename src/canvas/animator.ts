@@ -11,12 +11,12 @@ const CURSOR_MS = 560;
 const CURSOR_LINGER_MS = 2600;
 const PULSE_MS = 1600;
 
-export const PARTNER_COLOR = { background: "#ff6a3d", stroke: "#ff6a3d" };
+export const PARTNER_COLOR = { background: "#6965db", stroke: "#6965db" };
 /**
  * Excalidraw ignores Collaborator.color for cursors and derives a pastel hue from a hash of the
- * collaborator id. This id hashes to hue 20, a peach that matches the partner's ember color.
+ * collaborator id. This id hashes to hue 240, a lavender next to Excalidraw's own violet accent.
  */
-const PARTNER_ID = "partner-53";
+const PARTNER_ID = "partner-7";
 
 type Fade = { start: number; target: number };
 type CursorState = {

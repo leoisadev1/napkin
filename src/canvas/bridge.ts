@@ -2,14 +2,14 @@
 // NodeId in customData (see meta.ts), so user moves, edits, undo and redo never desync the agent's view.
 import { CaptureUpdateAction, convertToExcalidrawElements, getVisibleSceneBounds, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement, FileId } from "@excalidraw/excalidraw/element/types";
-import type { BinaryFileData, DataURL, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { BinaryFileData, DataURL, ExcalidrawImperativeAPI, NormalizedZoomValue } from "@excalidraw/excalidraw/types";
 import type { BoardItem, BoardOp, BoardSummary, Placement } from "../../shared/board";
 import { NodeId } from "../../shared/board";
 import type { BoardBridge } from "../conversation/types";
 import type { Animator } from "./animator";
 import { createAnimator } from "./animator";
 import type { Built, IdFactory } from "./builders";
-import { arrowGeometry, buildArrow, buildFrame, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
+import { arrowGeometry, buildArrow, buildFrame, DORMANT_FRAME_NAME, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
 import type { Outline, Point, Rect } from "./geometry";
 import { boundsOf } from "./bounds";
 import { bendAround, center, contains, edgePoint, inflate, overlaps, union } from "./geometry";
@@ -18,7 +18,7 @@ import { dedupeNodeIds } from "./identity";
 import type { Block } from "./layout";
 import { besideSpot, fitFrame, isFree, nearestFree, overlappingPairs, placeAuto, placeInside, placeNear, settleBlocks } from "./layout";
 import type { NodeKind, NodeMeta } from "./meta";
-import { nodeIdOf, readMeta } from "./meta";
+import { metaData, nodeIdOf, readMeta } from "./meta";
 import { SWATCHES } from "./palette";
 
 export const DEFAULT_TITLE = "Untitled board";
@@ -27,19 +27,30 @@ type Insets = { top: number; bottom: number; left: number; right: number };
 
 /**
  * Screen-space insets covered by the app's floating chrome, so "in view" means actually visible. The bottom covers
- * the dock plus a two-line caption. Phones (the 730px breakpoint in ui.css) stack Excalidraw's toolbar and the title
+ * the dock: the bar, the live line and a row of suggestion chips. Phones (the 730px breakpoint in ui.css) stack Excalidraw's toolbar and the title
  * row on top and keep a lock column on the right.
  */
 export function chromeInsets(viewportWidth: number): Insets {
-  return viewportWidth <= 730 ? { top: 116, bottom: 300, left: 16, right: 52 } : { top: 80, bottom: 272, left: 32, right: 32 };
+  return viewportWidth <= 730 ? { top: 116, bottom: 210, left: 16, right: 52 } : { top: 80, bottom: 160, left: 32, right: 32 };
 }
 
 const ROW_GAP = 96;
 const EDGE_GAP = 8;
 /** Frame names render above the frame's top edge; keep that strip clear too. */
 const FRAME_TITLE_ROOM = 32;
-/** Below this zoom hand-drawn labels stop being legible. */
-const MIN_READABLE_ZOOM = 0.45;
+/**
+ * Camera follow: settle between `min` and `max`; go down to `floor` only when the new item needs it. `margin` is the
+ * screen gap kept between a followed item and the edge of the usable area. Phones trade zoom for context.
+ */
+function followZoom(viewportWidth: number) {
+  return viewportWidth <= 730 ? { min: 0.55, max: 1, floor: 0.4, margin: 20 } : { min: 0.7, max: 1, floor: 0.5, margin: 56 };
+}
+const GLIDE_MS = 620;
+
+/** Excalidraw clamps zoom to this range; anything inside it is a valid NormalizedZoomValue. */
+function isNormalizedZoom(value: number): value is NormalizedZoomValue {
+  return Number.isFinite(value) && value >= 0.1 && value <= 30;
+}
 
 export interface CanvasBridge extends BoardBridge {
   getTitle(): string;
@@ -133,10 +144,31 @@ function indexNodes(elements: readonly ExcalidrawElement[]): Map<NodeId, NodeEnt
   return nodes;
 }
 
+/** An agent frame with nothing in it yet: invisible, locked and nameless, its title parked in customData. */
+function isDormantFrame(el: ExcalidrawElement): boolean {
+  const meta = readMeta(el);
+  return el.type === "frame" && meta !== null && meta.kind === "frame" && el.locked && el.name === DORMANT_FRAME_NAME;
+}
+
+function frameTitle(el: ExcalidrawElement): string {
+  const meta = readMeta(el);
+  const parked = meta !== null && meta.kind === "frame" ? (meta.title ?? "") : "";
+  if (el.type !== "frame" && el.type !== "magicframe") return "";
+  return el.name === null || el.name === "" || el.name === DORMANT_FRAME_NAME ? parked : el.name;
+}
+
+/** Renames a frame. A dormant frame keeps the name parked until it wakes. */
+function renamedFrame(el: ExcalidrawElement, title: string): ExcalidrawElement {
+  if (el.type !== "frame" && el.type !== "magicframe") return el;
+  const meta = readMeta(el);
+  const customData = meta !== null && meta.kind === "frame" ? metaData({ ...meta, title }) : el.customData;
+  return newElementWith(el, isDormantFrame(el) ? { customData } : { name: title, customData });
+}
+
 function labelOf(entry: NodeEntry, byId: ReadonlyMap<string, ExcalidrawElement>): string {
   const textOf = (el: ExcalidrawElement | undefined): string => (el !== undefined && el.type === "text" ? el.originalText || el.text : "");
   const root = entry.root;
-  if (root.type === "frame" || root.type === "magicframe") return root.name ?? "";
+  if (root.type === "frame" || root.type === "magicframe") return frameTitle(root);
   if (root.type === "text") return textOf(root);
   const bound = (root.boundElements ?? []).find((b) => b.type === "text");
   if (bound !== undefined) return textOf(byId.get(bound.id));
@@ -153,6 +185,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let lastPlaced: NodeId | null = null;
   let followTimer: number | null = null;
   const pendingFollow = new Set<string>();
+  /** Dormant frames that got their first child in the current transaction; they fade in after commit. */
+  const woken = new Set<string>();
 
   const ids = (nodeId: string): IdFactory => {
     const stamp = `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -225,6 +259,11 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       elements: tx.elements,
       captureUpdate: capture === "undoable" ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
     });
+    if (woken.size > 0) {
+      const frames = api.getSceneElements().filter((el) => woken.has(el.id));
+      woken.clear();
+      animator.fadeIn([frames], 0);
+    }
   }
 
   // ---- Geometry helpers -------------------------------------------------------------------------
@@ -380,7 +419,12 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const frame = tx.elements.find((el) => el.id === frameElementId && !el.isDeleted);
     const rect = frame === undefined ? null : boundsOf([frame]);
     if (frame === undefined || rect === null) return;
-    const next = fitFrame(rect, frameChildren(tx, frameElementId, new Set()));
+    const children = frameChildren(tx, frameElementId, new Set());
+    if (children.length > 0 && isDormantFrame(frame)) {
+      patch(tx, frameElementId, (el) => (el.type === "frame" ? newElementWith(el, { name: frameTitle(el), opacity: 100, locked: false }) : el));
+      woken.add(frameElementId);
+    }
+    const next = fitFrame(rect, children);
     if (next.x === rect.x && next.y === rect.y && next.w === rect.w && next.h === rect.h) return;
     patch(tx, frameElementId, (el) => newElementWith(el, { x: next.x, y: next.y, width: next.w, height: next.h }));
   }
@@ -630,48 +674,92 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const groups = stagger === "sequence" ? placed.map((el) => [el]) : [placed];
     animator.fadeIn(groups, stagger === "sequence" ? Math.max(8, Math.min(45, 900 / placed.length)) : 0);
     const rect = boundsOf(placed);
-    if (rect !== null) animator.pointAt(restingPoint(rect), placed.filter((el) => containerIdOf(el) === null).map((el) => el.id));
+    // Highlight only each node's root element: one outline per item, not one per mockup part.
+    if (rect !== null) animator.pointAt(restingPoint(rect), placed.filter((el) => readMeta(el)?.role === "root").map((el) => el.id));
     for (const el of placed) pendingFollow.add(el.id);
     if (followTimer !== null) window.clearTimeout(followTimer);
     followTimer = window.setTimeout(follow, 140);
   }
 
-  /** Smoothly brings new items into view, fitting the whole board when they land off screen. */
+  type Camera = { cx: number; cy: number; z: number };
+  let cameraFrame: number | null = null;
+  let cameraTarget: Camera | null = null;
+
+  /**
+   * Keeps the newest items in view the way a person would: pan the shortest distance at a readable zoom. The zoom
+   * only drops below the minimum when the new item (with its frame, if that stays readable) would not fit.
+   */
   function follow() {
     followTimer = null;
-    const live = api.getSceneElements();
-    const fresh = live.filter((el) => pendingFollow.has(el.id));
+    const scene = api.getSceneElements();
+    const fresh = scene.filter((el) => pendingFollow.has(el.id));
     pendingFollow.clear();
-    const rect = boundsOf(fresh);
-    if (rect === null) return;
+    const itemRect = boundsOf(fresh);
+    if (itemRect === null) return;
     const state = api.getAppState();
+    const limits = followZoom(state.width);
     const insets = chromeInsets(state.width);
-    const zoom = state.zoom.value;
-    const [minX, minY, maxX, maxY] = getVisibleSceneBounds(state);
-    const visible = {
-      x: minX + insets.left / zoom,
-      y: minY + insets.top / zoom,
-      w: maxX - minX - (insets.left + insets.right) / zoom,
-      h: maxY - minY - (insets.top + insets.bottom) / zoom,
-    };
-    // Recenter a little before items touch the edge, not after.
-    const margin = 48 / zoom;
-    if (contains({ x: visible.x + margin, y: visible.y + margin, w: visible.w - margin * 2, h: visible.h - margin * 2 }, rect)) return;
-    // Fit the whole board while it stays readable; past that (small screens, big boards) frame the new items.
-    const all = boundsOf(live);
     const screenW = state.width - insets.left - insets.right;
     const screenH = state.height - insets.top - insets.bottom;
-    const fitZoom = all === null ? 1 : Math.min(screenW / Math.max(all.w, 1), screenH / Math.max(all.h, 1)) * 0.92;
-    const target = fitZoom >= MIN_READABLE_ZOOM ? live : fresh;
-    api.scrollToContent(target, {
-      fitToViewport: true,
-      viewportZoomFactor: 0.92,
-      animate: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-      duration: 650,
-      maxZoom: 1,
-      minZoom: target === live ? 0.1 : MIN_READABLE_ZOOM,
-      canvasOffsets: insets,
-    });
+    // Mid-glide, judge against where the camera is heading, or a later item would undo the move still in flight.
+    const actual: Camera = { cx: -state.scrollX + state.width / 2 / state.zoom.value, cy: -state.scrollY + state.height / 2 / state.zoom.value, z: state.zoom.value };
+    const base = cameraFrame !== null && cameraTarget !== null ? cameraTarget : actual;
+    const { cx, cy, z: zoom } = base;
+    const viewAt = (z: number, cx: number, cy: number): Rect => {
+      const w = screenW / z;
+      const h = screenH / z;
+      // The usable area is offset by the chrome insets; its center is not the window's center.
+      const x = cx - state.width / 2 / z + insets.left / z;
+      const y = cy - state.height / 2 / z + insets.top / z;
+      return { x, y, w, h };
+    };
+    const margin = limits.margin / zoom;
+    const now = viewAt(zoom, cx, cy);
+    if (contains({ x: now.x + margin, y: now.y + margin, w: now.w - margin * 2, h: now.h - margin * 2 }, itemRect)) return;
+
+    const fitsAt = (r: Rect) => Math.min((screenW - limits.margin * 2) / Math.max(r.w, 1), (screenH - limits.margin * 2) / Math.max(r.h, 1));
+    // Show the item with the frame around it, so a flow inside a frame reads as one piece, when that stays readable.
+    const frameIds = new Set(fresh.flatMap((el) => (el.frameId === null ? [] : [el.frameId])));
+    const withFrames = boundsOf([...fresh, ...scene.filter((el) => frameIds.has(el.id))]);
+    const rect = withFrames !== null && fitsAt(withFrames) >= limits.floor ? withFrames : itemRect;
+    let z = Math.min(limits.max, Math.max(limits.min, zoom));
+    if (fitsAt(rect) < z) z = Math.max(limits.floor, fitsAt(rect));
+    const view = viewAt(z, cx, cy);
+    const m = limits.margin / z;
+    const shift = (start: number, size: number, lo: number, len: number) => {
+      if (len + 2 * m > size || lo - m < start) return lo - m - start;
+      if (lo + len + m > start + size) return lo + len + m - (start + size);
+      return 0;
+    };
+    const dx = shift(view.x, view.w, rect.x, rect.w);
+    const dy = shift(view.y, view.h, rect.y, rect.h);
+    glide({ from: actual, to: { cx: cx + dx, cy: cy + dy, z } });
+  }
+
+  /** Tweens the camera center and zoom together so the motion reads as one move, not a pan plus a zoom. */
+  function glide({ from, to }: { from: Camera; to: Camera }) {
+    if (cameraFrame !== null) cancelAnimationFrame(cameraFrame);
+    cameraTarget = to;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = reduced ? 1 : Math.min(1, (now - start) / GLIDE_MS);
+      const k = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const z = from.z + (to.z - from.z) * k;
+      const cx = from.cx + (to.cx - from.cx) * k;
+      const cy = from.cy + (to.cy - from.cy) * k;
+      const state = api.getAppState();
+      if (!isNormalizedZoom(z)) {
+        cameraFrame = null;
+        return;
+      }
+      api.updateScene({
+        appState: { zoom: { value: z }, scrollX: state.width / 2 / z - cx, scrollY: state.height / 2 / z - cy },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      cameraFrame = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    cameraFrame = requestAnimationFrame(step);
   }
 
   // ---- Ops ----------------------------------------------------------------------------------
@@ -728,7 +816,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     if (existing !== undefined && existing.kind === "frame" && op.op === "add_frame") {
       // Re-declaring a frame renames it; replacing it would strand its children.
       const root = existing.root;
-      patch(tx, root.id, (el) => (el.type === "frame" || el.type === "magicframe" ? newElementWith(el, { name: op.title }) : el));
+      patch(tx, root.id, (el) => renamedFrame(el, op.title));
       commit(tx);
       lastPlaced = op.id;
       return;
@@ -810,6 +898,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     markPlaced(nodeId);
     commit(tx);
     lastPlaced = nodeId;
+    // A dormant frame has nothing to show yet; its first child announces it.
+    if (placed.every(isDormantFrame)) return;
     const isMockup = placed.some((el) => readMeta(el)?.kind === "mockup");
     announce(placed, isMockup ? "sequence" : "together");
   }
@@ -877,7 +967,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       const label = op.label;
       const root = entry.root;
       if (root.type === "frame" || root.type === "magicframe") {
-        patch(tx, root.id, (el) => (el.type === "frame" || el.type === "magicframe" ? newElementWith(el, { name: label }) : el));
+        patch(tx, root.id, (el) => renamedFrame(el, label));
       } else if (root.type === "text") {
         patch(tx, root.id, (el) => retext(el, label));
       } else {
@@ -1078,6 +1168,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       return () => titleListeners.delete(listener);
     },
     dispose() {
+      if (cameraFrame !== null) cancelAnimationFrame(cameraFrame);
       animator.dispose();
       if (followTimer !== null) window.clearTimeout(followTimer);
       titleListeners.clear();

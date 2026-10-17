@@ -7,7 +7,8 @@ const Role = z.enum(["root", "part"]);
 
 export const NodeMeta = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("shape"), nodeId: NodeId, role: Role, shape: ShapeKind, color: Color }),
-  z.object({ kind: z.literal("frame"), nodeId: NodeId, role: Role }),
+  /** `title` keeps the frame's name while it is dormant (empty, invisible, name cleared); see bridge.ts. */
+  z.object({ kind: z.literal("frame"), nodeId: NodeId, role: Role, title: z.string().optional() }),
   z.object({ kind: z.literal("mockup"), nodeId: NodeId, role: Role }),
   z.object({ kind: z.literal("image"), nodeId: NodeId, role: Role }),
   z.object({ kind: z.literal("edge"), nodeId: NodeId, role: Role, from: NodeId, to: NodeId }),

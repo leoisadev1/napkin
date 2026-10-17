@@ -143,12 +143,20 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
   }
 }
 
+/**
+ * Frames start dormant: invisible, locked and unnamed (the title waits in customData) so an empty box never sits on
+ * the board. The bridge wakes the frame when its first child lands. It still reserves its space, so waking it moves
+ * nothing.
+ */
+/** Name a dormant frame carries: invisible, but not empty, since Excalidraw shows "Frame" for a missing name. */
+export const DORMANT_FRAME_NAME = "\u200b";
+
 export function buildFrame(args: { nodeId: string; id: IdFactory; title: string }): Built {
   const rootId = args.id("root");
   const elements = finish(
-    [{ id: rootId, type: "frame", children: [], name: args.title, x: 0, y: 0, width: 440, height: 260 }],
-    () => ({ kind: "frame", nodeId: args.nodeId, role: "root" }),
-  );
+    [{ id: rootId, type: "frame", children: [], x: 0, y: 0, width: 440, height: 260 }],
+    () => ({ kind: "frame", nodeId: args.nodeId, role: "root", title: args.title }),
+  ).map((el) => (el.type === "frame" ? { ...el, name: DORMANT_FRAME_NAME, opacity: 0, locked: true } : el));
   return { rootId, elements };
 }
 

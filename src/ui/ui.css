@@ -1,57 +1,89 @@
 /*
-  Direction
-  1. Reference: Excalidraw's own floating islands (chrome sits on the paper, never boxes it in) and the
-     voice-mode orb of ChatGPT and Siri (one physical object that visibly hears and speaks).
-  2. Palette: ink #18181b, muted ink #5c5c66 / #8b8b94, white islands with Excalidraw's island shadow.
-     Two voices: signal blue #2f6bff is you (listening); ember #ff6a3d is the partner (orb while
-     speaking, its cursor on the canvas, its name in captions).
-  3. Type: Instrument Sans for UI (a grotesk with a little warmth, not the default Inter), Excalifont for
-     the board title and the welcome line so the chrome belongs to the hand-drawn canvas.
-  4. Layout: full-bleed canvas; three islands only (title, top-right actions, bottom voice dock).
-  5. Signature: the partner is a presence with one color: ember orb, ember cursor, ember caption name.
-  6. Avoiding: purple AI gradients, glass on everything, pill badges, emoji icons, template hero layout.
+  Direction: the chrome should read as a first-party Excalidraw feature. Every floating surface is an Excalidraw
+  island (same white, same three-layer shadow, 8px radius, 36px controls), UI text is Assistant like Excalidraw's
+  own menus, and the one accent is Excalidraw's violet. The hand-drawn font belongs to the board and the welcome
+  line, never to controls. The partner has no voice and no mascot: it shows up as a cursor on the canvas and a
+  quiet "Sketching" tag. Avoid: glows, gradients, halos, heavy shadows, tinted icon tiles, extra accent colors.
 */
 
+@font-face {
+  font-family: "Assistant";
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Assistant/Assistant-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Assistant";
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/Assistant/Assistant-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Assistant";
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/Assistant/Assistant-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Assistant";
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/Assistant/Assistant-Bold.woff2") format("woff2");
+}
+
 :root {
-  --ui-font: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ui-font: Assistant, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --hand-font: "Excalifont", "Virgil", "Comic Sans MS", cursive;
 
-  --ink: #18181b;
+  /* Excalidraw's light palette. */
+  --island: #ffffff;
+  --ink: #1b1b1f;
   --ink-2: #5c5c66;
-  --ink-3: #8b8b94;
-  --surface: #ffffff;
-  --surface-2: #f4f4f5;
-  --hairline: rgb(24 24 27 / 0.08);
-  --signal: #2f6bff;
-  --signal-soft: rgb(47 107 255 / 0.32);
-  --ember: #ff6a3d;
-  --ember-soft: rgb(255 106 61 / 0.34);
-  --danger: #e5484d;
+  --ink-3: #868690;
+  --hover: #f1f0ff;
+  --surface-low: #ececf4;
+  --hairline: #e4e4ec;
+  --primary: #6965db;
+  --primary-strong: #5753d0;
+  --on-primary: #ffffff;
+  --primary-container: #e0dfff;
+  --on-primary-container: #030064;
+  --live: #e03131;
+  --danger: #c92a2a;
 
   --shadow-island: 0 0 0.93px 0 rgb(0 0 0 / 0.17), 0 0 3.13px 0 rgb(0 0 0 / 0.08), 0 7px 14px 0 rgb(0 0 0 / 0.05);
-  --shadow-raised: 0 0 1px 0 rgb(0 0 0 / 0.18), 0 2px 6px 0 rgb(0 0 0 / 0.06), 0 16px 32px -8px rgb(0 0 0 / 0.14);
-  --radius: 10px;
+  --radius: 8px;
+  --radius-inner: 6px;
+  --control: 36px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-icon: cubic-bezier(0.2, 0, 0, 1);
 
-  --dock-bottom: 20px;
+  --dock-bottom: 16px;
 
   font-family: var(--ui-font);
   color: var(--ink);
 }
 
 :root[data-theme="dark"] {
-  --ink: #ececf1;
-  --ink-2: #a8a8b3;
-  --ink-3: #7c7c87;
-  --surface: #232329;
-  --surface-2: #2e2e35;
-  --hairline: rgb(255 255 255 / 0.08);
-  --shadow-island: 0 0 0 1px rgb(255 255 255 / 0.06), 0 7px 14px 0 rgb(0 0 0 / 0.35);
-  --shadow-raised: 0 0 0 1px rgb(255 255 255 / 0.07), 0 16px 32px -8px rgb(0 0 0 / 0.6);
+  --island: #232329;
+  --ink: #e3e3e8;
+  --ink-2: #b4b4bd;
+  --ink-3: #8a8a95;
+  --hover: hsl(245 10% 21%);
+  --surface-low: hsl(240 8% 15%);
+  --hairline: #34343c;
+  --primary: #a8a5ff;
+  --primary-strong: #bbb8ff;
+  --on-primary: #121212;
+  --primary-container: #403e6a;
+  --on-primary-container: #e0dfff;
+  --live: #ff6b6b;
+  --danger: #ffa8a5;
   color-scheme: dark;
 }
 
@@ -77,6 +109,18 @@
   inset: 0;
 }
 
+/*
+  Stacking: Excalidraw's canvases sit at z 1-2 and its UI layer at z 4, all in the root stacking context. Our chrome
+  sits at z 3 so Excalidraw's own popovers, menus and dialogs always cover it, never the other way round.
+*/
+.title-island,
+.top-right,
+.dock,
+.transcript,
+.empty {
+  z-index: 3;
+}
+
 /* ---- Excalidraw adjustments ------------------------------------------------------------- */
 
 /* The library button and the collaborator list have no job here; the partner's avatar would duplicate its cursor. */
@@ -90,7 +134,7 @@
 /* ---- Shared controls ------------------------------------------------------------------------ */
 
 .island {
-  background: var(--surface);
+  background: var(--island);
   box-shadow: var(--shadow-island);
   border-radius: var(--radius);
 }
@@ -98,13 +142,13 @@
 .icon-btn {
   display: inline-grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: var(--control);
+  height: var(--control);
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: transparent;
-  color: var(--ink-2);
+  color: var(--ink);
   cursor: pointer;
   transition-property: background-color, color, scale;
   transition-duration: 150ms;
@@ -112,31 +156,30 @@
 }
 
 .icon-btn.island {
-  background: var(--surface);
-  border-radius: var(--radius);
+  background: var(--island);
 }
 
 .icon-btn[data-active="true"] {
-  color: var(--ink);
-  background: var(--surface-2);
+  background: var(--primary-container);
+  color: var(--on-primary-container);
 }
 
 .icon-btn:active {
   scale: 0.96;
 }
 
-.icon-btn:focus-visible,
-.title-button:focus-visible,
-.prompt:focus-visible,
-.composer-send:focus-visible {
-  outline: 2px solid var(--signal);
+:where(.icon-btn, .title-button, .prompt, .composer-send, .mic, .chip, .chips-dismiss, .start-talking):focus-visible {
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .icon-btn:hover {
-    color: var(--ink);
-    background: var(--surface-2);
+    background: var(--hover);
+  }
+
+  .icon-btn[data-active="true"]:hover {
+    background: var(--primary-container);
   }
 }
 
@@ -146,14 +189,13 @@
   position: fixed;
   top: 16px;
   left: 64px;
-  z-index: 4;
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 4px 0 8px;
-  max-width: min(300px, calc(50vw - 300px));
-  background: var(--surface);
+  gap: 2px;
+  height: var(--control);
+  padding: 0 2px 0 10px;
+  max-width: min(280px, calc(50vw - 300px));
+  background: var(--island);
   box-shadow: var(--shadow-island);
   border-radius: var(--radius);
   color: var(--ink);
@@ -163,19 +205,21 @@
   display: grid;
   place-items: center;
   flex: none;
+  color: var(--ink-2);
 }
 
 .title-button,
 .title-input {
   min-width: 0;
-  height: 28px;
+  height: 32px;
   padding: 0 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-inner);
   background: transparent;
-  font-family: var(--hand-font);
-  font-size: 19px;
-  line-height: 28px;
+  font-family: var(--ui-font);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 32px;
   color: var(--ink);
 }
 
@@ -190,12 +234,12 @@
 .title-input {
   width: 220px;
   outline: none;
-  background: var(--surface-2);
+  background: var(--hover);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .title-button:hover {
-    background: var(--surface-2);
+    background: var(--hover);
   }
 }
 
@@ -205,7 +249,6 @@
   position: fixed;
   top: 16px;
   right: 16px;
-  z-index: 4;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -223,17 +266,21 @@
 }
 
 .signin .lwc-btn {
-  height: 36px;
+  height: var(--control);
   gap: 8px;
-  padding: 0 14px 0 12px;
+  padding: 0 12px 0 10px;
+  border: 0;
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--island);
   color: var(--ink);
-  font-size: 13.5px;
+  font-family: var(--ui-font);
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: 0;
   box-shadow: var(--shadow-island);
   white-space: nowrap;
   transition-property: background-color, scale;
+  transition-duration: 150ms;
 }
 
 .signin .lwc-btn svg {
@@ -243,7 +290,7 @@
 
 .signin .lwc-btn:hover:not(:disabled) {
   transform: none;
-  background: var(--surface-2);
+  background: var(--hover);
   box-shadow: var(--shadow-island);
 }
 
@@ -252,7 +299,7 @@
 }
 
 .signin .lwc-loading {
-  height: 36px;
+  height: var(--control);
   padding: 0 4px;
   font-size: 13px;
   color: var(--ink-3);
@@ -268,10 +315,11 @@
 
 .signin .lwc-card {
   width: 340px;
-  background: var(--surface);
+  background: var(--island);
   color: var(--ink);
   border: 0;
-  box-shadow: var(--shadow-raised);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-island);
   backdrop-filter: none;
 }
 
@@ -279,10 +327,10 @@
   width: max-content;
   max-width: 260px;
   padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow-raised);
-  font-size: 12.5px;
+  border-radius: var(--radius);
+  background: var(--island);
+  box-shadow: var(--shadow-island);
+  font-size: 13px;
 }
 
 .signin .lwc-card-label,
@@ -297,7 +345,7 @@
 
 .signin .lwc-consent-list li {
   color: var(--ink-2);
-  background: var(--surface-2);
+  background: var(--surface-low);
   border-color: var(--hairline);
 }
 
@@ -307,10 +355,10 @@
 }
 
 .signin .lwc-chip {
-  height: 36px;
+  height: var(--control);
   gap: 8px;
   padding: 2px 4px 2px 2px;
-  background: var(--surface);
+  background: var(--island);
   color: var(--ink);
   border: 0;
   border-radius: var(--radius);
@@ -318,14 +366,14 @@
 }
 
 .signin .lwc-avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-inner);
   font-size: 12px;
 }
 
 .signin .lwc-identity-name {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .signin .lwc-identity-plan {
@@ -334,28 +382,27 @@
 
 .signin .lwc-disconnect {
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-inner);
   font-size: 12px;
   color: var(--ink-3);
 }
 
 .signin .lwc-disconnect:hover {
   color: var(--ink);
-  background: var(--surface-2);
+  background: var(--hover);
 }
 
-/* ---- Voice dock ---------------------------------------------------------------------------------- */
+/* ---- Dock: suggestions, live line, and the bar ------------------------------------------------- */
 
 .dock {
   position: fixed;
   left: 50%;
   bottom: calc(var(--dock-bottom) + env(safe-area-inset-bottom, 0px));
-  z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  width: min(720px, calc(100vw - 32px));
+  gap: 8px;
+  width: min(520px, calc(100vw - 32px));
   translate: -50% 0;
   pointer-events: none;
 }
@@ -364,69 +411,51 @@
   pointer-events: auto;
 }
 
-.dock-orb {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-
-.dock-hint {
-  margin: 0;
-  min-height: 16px;
-  font-size: 12.5px;
-  font-weight: 550;
-  line-height: 16px;
-  letter-spacing: 0.005em;
-  color: var(--ink-2);
-  text-align: center;
-  text-wrap: balance;
-  transition: color 200ms ease;
-}
-
-.dock-hint[data-state="listening"] {
-  color: var(--signal);
-}
-
-.dock-hint[data-state="speaking"],
-.dock-hint[data-state="thinking"] {
-  color: var(--ember);
-}
-
-.dock-hint[data-state="error"] {
-  color: var(--danger);
-}
-
-.dock-hint[data-state="disabled"] {
-  color: var(--ink-3);
-}
-
-/* Composer */
-
-.composer {
+/* The bar: mic toggle, text input, send. One island, like Excalidraw's toolbar. */
+.bar {
   display: flex;
   align-items: center;
   gap: 4px;
-  width: min(400px, 100%);
+  width: 100%;
   height: 44px;
-  padding: 0 6px 0 16px;
-  background: var(--surface);
-  border-radius: 12px;
+  padding: 4px;
+  background: var(--island);
+  border-radius: var(--radius);
   box-shadow: var(--shadow-island);
   transition: box-shadow 150ms ease;
 }
 
-.composer:focus-within {
-  box-shadow: var(--shadow-island), 0 0 0 2px var(--signal-soft);
+.bar:focus-within:has(.composer-input:focus-visible) {
+  box-shadow: var(--shadow-island), 0 0 0 1px var(--primary);
+}
+
+.bar-divider {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--hairline);
+}
+
+.composer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  gap: 4px;
 }
 
 .composer-input {
   flex: 1;
   min-width: 0;
   height: 100%;
+  padding: 0 4px;
   border: 0;
   outline: none;
   background: transparent;
+  font-family: var(--ui-font);
   font-size: 15px;
   color: var(--ink);
 }
@@ -439,12 +468,12 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: var(--control);
+  height: var(--control);
   padding: 0;
   border: 0;
-  border-radius: 8px;
-  background: var(--surface-2);
+  border-radius: var(--radius-inner);
+  background: transparent;
   color: var(--ink-3);
   cursor: pointer;
   transition-property: background-color, color, scale;
@@ -453,40 +482,266 @@
 }
 
 .composer-send[data-ready="true"] {
-  background: var(--ink);
-  color: var(--surface);
+  background: var(--primary);
+  color: var(--on-primary);
 }
 
 .composer-send:active {
   scale: 0.96;
 }
 
-/* Captions */
+@media (hover: hover) and (pointer: fine) {
+  .composer-send[data-ready="false"]:hover {
+    background: var(--hover);
+  }
 
-.captions {
-  display: flex;
-  justify-content: center;
-  width: 100%;
-  min-height: 0;
+  .composer-send[data-ready="true"]:hover {
+    background: var(--primary-strong);
+  }
 }
 
-.caption {
-  margin: 0;
-  max-width: 100%;
-  padding: 10px 16px 11px;
-  border-radius: 14px;
-  background: color-mix(in oklab, var(--surface) 90%, transparent);
-  backdrop-filter: blur(12px) saturate(1.4);
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-  box-shadow: var(--shadow-island);
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 1.45;
+/* Mic toggle. Off: a plain "Talk" button. Live: Excalidraw's selected-tool fill with a red dot and level bars. */
+.mic {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  height: var(--control);
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: var(--radius-inner);
+  background: transparent;
   color: var(--ink);
-  text-align: center;
-  text-wrap: pretty;
+  font-family: var(--ui-font);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition-property: background-color, color, scale;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mic:active:not([aria-disabled="true"]) {
+  scale: 0.96;
+}
+
+.mic[data-state="live"] {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.mic[data-state="connecting"] {
+  color: var(--ink-2);
+  cursor: progress;
+}
+
+.mic[data-state="error"] {
+  color: var(--danger);
+}
+
+.mic[data-state="disabled"] {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mic[data-state="off"]:hover,
+  .mic[data-state="error"]:hover {
+    background: var(--hover);
+  }
+}
+
+/* The glyph slot cross-fades between the mic icon and the live meter. */
+.mic-glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+
+.mic-glyph > * {
+  grid-area: 1 / 1;
+  transition-property: opacity, scale, filter;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ease-icon);
+}
+
+.mic-meter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+}
+
+.mic-meter i {
+  width: 3px;
+  height: 14px;
+  border-radius: 1.5px;
+  background: currentColor;
+  transform: scaleY(0.36);
+  transition: transform 80ms linear;
+}
+
+.mic[data-state="live"] .mic-icon,
+.mic:not([data-state="live"]) .mic-meter {
+  opacity: 0;
+  scale: 0.25;
+  filter: blur(4px);
+}
+
+.mic-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: live-dot 2.4s ease-in-out infinite;
+}
+
+@keyframes live-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Live line: the tail of what you're saying, committed words solid, the in-progress phrase lighter. */
+.live-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 22px;
+  padding: 0 4px;
   transition-property: opacity, translate;
-  transition-duration: 220ms;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.live-line[data-visible="false"] {
+  opacity: 0;
+  translate: 0 4px;
+  pointer-events: none;
+}
+
+.live-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--ink);
+  /* Older words slide off the left edge under a soft fade, newest words stay in view. */
+  mask-image: linear-gradient(to right, transparent 0, #000 48px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 48px);
+}
+
+.live-text[data-overflow="true"] {
+  justify-content: flex-end;
+}
+
+.live-text[data-overflow="false"] {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+.live-text-inner {
+  flex: none;
+}
+
+.live-said {
+  color: var(--ink);
+}
+
+.live-hearing {
+  color: var(--ink-3);
+}
+
+.live-hint {
+  color: var(--ink-3);
+}
+
+.live-error {
+  color: var(--danger);
+  white-space: normal;
+  text-align: center;
+}
+
+.live-text:has(.live-error) {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+/* "Sketching" tag: present only while the partner draws. */
+.sketching {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition-property: opacity, translate;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.sketching[data-active="false"] {
+  position: absolute;
+  opacity: 0;
+  translate: 4px 0;
+  pointer-events: none;
+}
+
+.sketching svg {
+  color: var(--primary);
+  animation: sketch-nib 1.2s ease-in-out infinite;
+}
+
+@keyframes sketch-nib {
+  0%,
+  100% {
+    translate: 0 0;
+    rotate: 0deg;
+  }
+  50% {
+    translate: 1px -1px;
+    rotate: -8deg;
+  }
+}
+
+/* Suggestion chips. */
+.chips {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chips[data-visible="false"] {
+  pointer-events: none;
+}
+
+.chips li {
+  display: flex;
+  transition-property: opacity, translate;
+  transition-duration: 240ms;
   transition-timing-function: var(--ease-out);
   @starting-style {
     opacity: 0;
@@ -494,328 +749,76 @@
   }
 }
 
-.captions[data-visible="false"] .caption {
+.chips[data-visible="false"] li {
   opacity: 0;
   translate: 0 4px;
-  pointer-events: none;
+  transition-duration: 160ms;
+  transition-delay: 0ms !important;
 }
 
-.caption-who {
-  margin-right: 8px;
-  font-size: 12.5px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
-  vertical-align: 1px;
-}
-
-.caption[data-who="you"] .caption-who {
-  color: var(--signal);
-}
-
-.caption[data-who="partner"] .caption-who {
-  color: var(--ember);
-}
-
-.caption[data-who="you"] .caption-text {
-  color: var(--ink-2);
-}
-
-/* ---- The orb --------------------------------------------------------------------------------------- */
-
-.orb {
-  --orb-size: 72px;
-  --core: #18181b;
-  position: relative;
-  width: var(--orb-size);
-  height: var(--orb-size);
-  padding: 0;
+.chip,
+.chips-dismiss {
+  height: 32px;
   border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: #ffffff;
+  border-radius: var(--radius);
+  background: var(--island);
+  box-shadow: var(--shadow-island);
+  font-family: var(--ui-font);
+  color: var(--ink);
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  transition-property: background-color, scale;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
 }
 
-.orb:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 6px;
-}
-
-.orb[data-state="listening"] {
-  --core: var(--signal);
-}
-
-.orb[data-state="thinking"] {
-  --core: #27272a;
-}
-
-.orb[data-state="speaking"] {
-  --core: var(--ember);
-}
-
-.orb[data-state="error"] {
-  --core: var(--danger);
-}
-
-.orb[data-state="disabled"] {
-  --core: #e4e4e7;
-  color: #a1a1aa;
-  cursor: not-allowed;
-}
-
-.orb[data-state="connecting"] {
-  cursor: progress;
-}
-
-:root[data-theme="dark"] .orb[data-state="idle"],
-:root[data-theme="dark"] .orb[data-state="connecting"] {
-  --core: #f4f4f5;
-  color: #18181b;
-}
-
-:root[data-theme="dark"] .orb[data-state="disabled"] {
-  --core: #3f3f46;
-  color: #71717a;
-}
-
-.orb-core {
-  position: absolute;
-  inset: 0;
+.chip {
+  max-width: 100%;
+  padding: 0 12px;
   overflow: hidden;
-  border-radius: 50%;
-  background-color: var(--core);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.16),
-    inset 0 -8px 16px rgb(0 0 0 / 0.18),
-    0 1px 2px rgb(0 0 0 / 0.2),
-    0 12px 28px -8px color-mix(in oklab, var(--core) 70%, transparent);
-  transition-property: background-color, box-shadow, scale;
-  transition-duration: 240ms, 240ms, 160ms;
-  transition-timing-function: var(--ease-out);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
 }
 
-/* Specular highlight: what makes it read as an object rather than a flat button. */
-.orb-core::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(circle at 32% 24%, rgb(255 255 255 / 0.32), rgb(255 255 255 / 0) 52%);
-  pointer-events: none;
+.chips-dismiss {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  padding: 0;
+  color: var(--ink-3);
 }
 
-.orb[data-state="disabled"] .orb-core {
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
-}
-
-.orb[data-state="disabled"] .orb-core::before {
-  opacity: 0.4;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .orb:not([data-state="disabled"]):not([data-state="connecting"]):hover .orb-core {
-    scale: 1.04;
-  }
-}
-
-.orb:not([data-state="disabled"]):active .orb-core {
+.chip:active,
+.chips-dismiss:active {
   scale: 0.96;
 }
 
-/* Listening halo, scaled by mic level from JS. */
-.orb-halo {
-  position: absolute;
-  inset: -12px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--signal-soft) 40%, rgb(47 107 255 / 0) 70%);
-  opacity: 0;
-  transition-property: transform, opacity;
-  transition-duration: 90ms, 160ms;
-  transition-timing-function: linear;
-  pointer-events: none;
-}
-
-.orb[data-state="listening"] .orb-halo {
-  opacity: 0.3;
-}
-
-/* Speaking ripple, scaled by output level from JS. */
-.orb-ripple {
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  border: 2px solid var(--ember-soft);
-  opacity: 0;
-  transition-property: transform, opacity;
-  transition-duration: 90ms, 160ms;
-  transition-timing-function: linear;
-  pointer-events: none;
-}
-
-.orb[data-state="speaking"] .orb-ripple {
-  opacity: 0.3;
-}
-
-/* Spinning arc for connecting and thinking. */
-.orb-ring {
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 55%, var(--ring, var(--signal)) 100%);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
-  opacity: 0;
-  transition: opacity 200ms ease;
-  animation: orb-spin 1.1s linear infinite;
-  animation-play-state: paused;
-  pointer-events: none;
-}
-
-.orb[data-state="connecting"] .orb-ring,
-.orb[data-state="thinking"] .orb-ring {
-  opacity: 1;
-  animation-play-state: running;
-}
-
-.orb[data-state="thinking"] .orb-ring {
-  --ring: var(--ember);
-}
-
-@keyframes orb-spin {
-  to {
-    rotate: 1turn;
-  }
-}
-
-/* Idle invitation: a slow breath so the orb reads as alive. */
-.orb[data-state="idle"] .orb-halo {
-  inset: -8px;
-  background: radial-gradient(circle, rgb(24 24 27 / 0.14) 45%, rgb(24 24 27 / 0) 70%);
-  animation: orb-breathe 3.6s ease-in-out infinite;
-}
-
-@keyframes orb-breathe {
-  0%,
-  100% {
-    opacity: 0.15;
-    transform: scale(0.96);
-  }
-  50% {
-    opacity: 0.6;
-    transform: scale(1.1);
-  }
-}
-
-/* Glyphs cross-fade with scale and blur. */
-.orb-glyph {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  opacity: 0;
-  scale: 0.25;
-  filter: blur(4px);
-  transition-property: opacity, scale, filter;
-  transition-duration: 220ms;
-  transition-timing-function: var(--ease-icon);
-}
-
-.orb[data-state="idle"] [data-glyph="mic"],
-.orb[data-state="connecting"] [data-glyph="mic"],
-.orb[data-state="listening"] [data-glyph="mic"],
-.orb[data-state="thinking"] [data-glyph="dots"],
-.orb[data-state="speaking"] [data-glyph="wave"],
-.orb[data-state="error"] [data-glyph="alert"],
-.orb[data-state="disabled"] [data-glyph="off"] {
-  opacity: 1;
-  scale: 1;
-  filter: blur(0);
-}
-
-.orb[data-state="connecting"] [data-glyph="mic"] {
-  opacity: 0.55;
-}
-
 @media (hover: hover) and (pointer: fine) {
-  .orb[data-state="speaking"]:hover [data-glyph="wave"],
-  .orb[data-state="thinking"]:hover [data-glyph="dots"] {
-    opacity: 0;
-    scale: 0.25;
-    filter: blur(4px);
+  .chip:hover,
+  .chips-dismiss:hover {
+    background: var(--hover);
   }
 
-  .orb[data-state="speaking"]:hover [data-glyph="stop"],
-  .orb[data-state="thinking"]:hover [data-glyph="stop"] {
-    opacity: 1;
-    scale: 1;
-    filter: blur(0);
+  .chips-dismiss:hover {
+    color: var(--ink);
   }
-}
-
-.orb-dots {
-  display: flex;
-  gap: 5px;
-}
-
-.orb-dots i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: orb-dot 1.1s ease-in-out infinite;
-}
-
-.orb-dots i:nth-child(2) {
-  animation-delay: 140ms;
-}
-
-.orb-dots i:nth-child(3) {
-  animation-delay: 280ms;
-}
-
-@keyframes orb-dot {
-  0%,
-  100% {
-    opacity: 0.35;
-    translate: 0 1px;
-  }
-  45% {
-    opacity: 1;
-    translate: 0 -3px;
-  }
-}
-
-.orb-bars {
-  display: flex;
-  align-items: center;
-  gap: 3.5px;
-  height: 24px;
-}
-
-.orb-bars i {
-  width: 3.5px;
-  height: 24px;
-  border-radius: 2px;
-  background: currentColor;
-  transform: scaleY(0.3);
-  transition: transform 90ms linear;
 }
 
 /* ---- Transcript panel ------------------------------------------------------------------------------ */
 
 .transcript {
   position: fixed;
-  top: 68px;
+  top: 64px;
   right: 16px;
-  bottom: 16px;
-  z-index: 6;
+  /* Clear of Excalidraw's help button in the bottom-right corner. */
+  bottom: 68px;
   display: flex;
   flex-direction: column;
-  width: min(360px, calc(100vw - 32px));
-  background: var(--surface);
-  border-radius: 14px;
-  box-shadow: var(--shadow-raised);
+  width: min(340px, calc(100vw - 32px));
+  background: var(--island);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-island);
   translate: calc(100% + 24px) 0;
   opacity: 0;
   visibility: hidden;
@@ -839,19 +842,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 8px 6px 20px;
+  padding: 8px 6px 4px 16px;
 }
 
 .transcript-head h2 {
   margin: 0;
   font-size: 14px;
-  font-weight: 650;
-  letter-spacing: 0.005em;
+  font-weight: 700;
 }
 
 .transcript-empty {
   margin: 0;
-  padding: 8px 20px;
+  padding: 8px 16px;
   font-size: 14px;
   line-height: 1.5;
   color: var(--ink-3);
@@ -861,53 +863,41 @@
 .transcript-list {
   flex: 1;
   margin: 0;
-  padding: 4px 20px 20px;
+  padding: 4px 16px 16px;
   overflow-y: auto;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 4px;
   overscroll-behavior: contain;
 }
 
 .turn {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+}
+
+.turn[data-continues="false"]:not(:first-child) {
+  padding-top: 8px;
 }
 
 .turn-who {
   font-size: 12px;
-  font-weight: 650;
-  color: var(--signal);
-}
-
-.turn[data-role="assistant"] .turn-who {
-  color: var(--ember);
+  font-weight: 600;
+  color: var(--ink-3);
 }
 
 .turn-text {
   margin: 0;
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--ink);
   text-wrap: pretty;
 }
 
-.turn[data-role="user"] .turn-text {
+.turn[data-role="assistant"] .turn-text {
   color: var(--ink-2);
-}
-
-.turn[data-final="false"] .turn-text::after {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 6px;
-  border-radius: 50%;
-  background: var(--ember);
-  vertical-align: 1px;
-  animation: orb-dot 1.1s ease-in-out infinite;
 }
 
 /* ---- Empty state ------------------------------------------------------------------------------------ */
@@ -915,37 +905,38 @@
 .empty {
   position: fixed;
   inset: 0;
-  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0;
-  padding: 72px 20px 240px;
+  padding: 72px 20px 160px;
   pointer-events: none;
   text-align: center;
 }
 
 .empty > * {
   transition-property: opacity, translate;
-  transition-duration: 420ms;
+  transition-duration: 360ms;
   transition-timing-function: var(--ease-out);
 }
 
-.empty[data-visible="false"] > *,
-.empty[data-visible="false"] .prompts li {
+.empty[data-visible="false"] > * {
   opacity: 0;
   translate: 0 -6px;
-  transition-duration: 200ms;
-  transition-delay: 0ms;
+  transition-duration: 180ms;
+  transition-delay: 0ms !important;
+}
+
+.empty[data-visible="true"] :is(button, a) {
+  pointer-events: auto;
 }
 
 .empty-title {
   margin: 0;
   font-family: var(--hand-font);
-  font-size: 46px;
+  font-size: 40px;
   font-weight: 400;
-  line-height: 1.1;
+  line-height: 1.15;
   color: var(--ink);
   @starting-style {
     opacity: 0;
@@ -954,78 +945,107 @@
 }
 
 .empty-sub {
-  margin: 12px 0 0;
-  max-width: 34ch;
-  font-size: 17px;
+  margin: 10px 0 0;
+  max-width: 44ch;
+  font-size: 16px;
   line-height: 1.5;
   color: var(--ink-2);
   text-wrap: balance;
-  transition-delay: 70ms;
+  transition-delay: 60ms;
   @starting-style {
     opacity: 0;
     translate: 0 8px;
   }
 }
 
-.prompts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  width: min(860px, 100%);
-  margin: 32px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.prompts li {
-  display: flex;
-  transition-property: opacity, translate;
-  transition-duration: 420ms;
-  transition-timing-function: var(--ease-out);
+.start-talking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  margin-top: 24px;
+  padding: 0 18px 0 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-family: var(--ui-font);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition-property: background-color, scale, opacity, translate;
+  transition-duration: 150ms, 150ms, 360ms, 360ms;
+  transition-delay: 0ms, 0ms, 120ms, 120ms;
   @starting-style {
     opacity: 0;
-    translate: 0 10px;
+    translate: 0 8px;
   }
 }
 
-.empty[data-visible="true"] .prompts li {
-  pointer-events: auto;
+.start-talking:active {
+  scale: 0.96;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .start-talking:hover {
+    background: var(--primary-strong);
+  }
+}
+
+.prompts-label {
+  margin: 28px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-3);
+  transition-delay: 160ms;
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+.prompts {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: min(400px, 100%);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  transition-delay: 200ms;
+  @starting-style {
+    opacity: 0;
+    translate: 0 8px;
+  }
 }
 
 .prompt {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   width: 100%;
-  padding: 16px 18px 18px;
+  min-height: 40px;
+  padding: 8px 12px 8px 14px;
   border: 0;
-  border-radius: 14px;
-  background: var(--surface);
+  border-radius: var(--radius);
+  background: var(--island);
   box-shadow: var(--shadow-island);
+  font-family: var(--ui-font);
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--ink);
   text-align: left;
   cursor: pointer;
-  transition-property: box-shadow, translate, scale;
-  transition-duration: 180ms;
-  transition-timing-function: var(--ease-out);
+  transition-property: background-color, scale;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
 }
 
-.prompt-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: color-mix(in oklab, var(--ember) 12%, var(--surface));
-  color: color-mix(in oklab, var(--ember) 80%, var(--ink));
-}
-
-.prompt-text {
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.45;
-  color: var(--ink);
-  text-wrap: pretty;
+.prompt svg {
+  flex: none;
+  color: var(--ink-3);
+  transition: translate 150ms ease;
 }
 
 .prompt:active {
@@ -1034,8 +1054,12 @@
 
 @media (hover: hover) and (pointer: fine) {
   .prompt:hover {
-    translate: 0 -2px;
-    box-shadow: var(--shadow-raised);
+    background: var(--hover);
+  }
+
+  .prompt:hover svg {
+    translate: 2px 0;
+    color: var(--ink-2);
   }
 }
 
@@ -1044,14 +1068,14 @@
 @media (max-width: 730px) {
   :root {
     /* Excalidraw's mobile toolbar sits along the bottom edge. */
-    --dock-bottom: 76px;
+    --dock-bottom: 72px;
   }
 
   /* Excalidraw's mobile toolbar owns the top edge and a lock/hand column hugs the right edge. */
   .title-island {
     left: 12px;
     top: 64px;
-    max-width: calc(100vw - 200px);
+    max-width: calc(100vw - 196px);
   }
 
   .top-right {
@@ -1059,107 +1083,67 @@
     right: 56px;
   }
 
-  .orb {
-    --orb-size: 64px;
-  }
-
-  .caption {
-    font-size: 16px;
-    padding: 8px 14px 9px;
-  }
-
   .dock {
-    gap: 10px;
+    width: calc(100vw - 24px);
+  }
+
+  .mic-label-long {
+    display: none;
   }
 
   .empty {
     justify-content: flex-start;
-    padding: 128px 16px 260px;
+    padding: 132px 16px 220px;
   }
 
   .empty-title {
-    font-size: 36px;
+    font-size: 32px;
   }
 
   .empty-sub {
-    font-size: 15.5px;
+    font-size: 15px;
   }
 
-  .prompts {
-    grid-template-columns: 1fr;
-    gap: 8px;
+  .start-talking {
+    margin-top: 20px;
+  }
+
+  .prompts-label {
     margin-top: 22px;
-  }
-
-  .prompt {
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-  }
-
-  .prompt-text {
-    font-size: 14px;
   }
 
   .transcript {
     top: 108px;
     right: 12px;
-    bottom: 12px;
+    bottom: 72px;
     width: calc(100vw - 24px);
   }
 }
 
-/* Short phones (320x568 and similar): the dock owns the lower half, so the invitation compacts to fit above it. */
-@media (max-width: 730px) and (max-height: 740px) {
+@media (max-width: 730px) and (max-height: 700px) {
   .empty {
     padding-top: 112px;
-    padding-bottom: calc(var(--dock-bottom) + 172px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .empty-title {
-    font-size: 30px;
   }
 
   .empty-sub {
     display: none;
   }
 
-  .prompts {
-    gap: 6px;
-    margin-top: 14px;
-  }
-
-  .prompt {
-    padding: 8px 12px;
-  }
-
-  .prompt-icon {
-    width: 28px;
-    height: 28px;
-  }
-
-  .prompt-text {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    overflow: hidden;
-    font-size: 13.5px;
-    line-height: 1.35;
+  .prompts li:nth-child(n + 3) {
+    display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .orb-ring,
-  .orb-dots i,
-  .orb[data-state="idle"] .orb-halo,
-  .turn[data-final="false"] .turn-text::after {
+  .mic-dot,
+  .sketching svg {
     animation: none;
   }
 
   .empty > *,
-  .prompts li,
-  .caption,
+  .chips li,
+  .live-line,
+  .sketching,
   .transcript {
     transition-property: opacity;
   }
