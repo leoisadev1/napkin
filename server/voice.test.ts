@@ -67,7 +67,7 @@ test('fallback low-pass rejects a 16kHz alias while retaining speech-band energy
 });
 test('board keywords retain case, split names into tokens, deduplicate and cap', async () => {
   const { boardKeywords } = await import('../src/voice/keywords');
-  const keywords = boardKeywords({ title: 'Cat Simulator', items: [{ id: 'cat', kind: 'shape', label: 'Cat Roblox XP prestige', frame: null, link: '' }], selection: [] });
+  const keywords = boardKeywords({ title: 'Cat Simulator', items: [{ origin: 'agent', bounds: { x: 0, y: 0, w: 200, h: 100 }, id: 'cat', kind: 'shape', label: 'Cat Roblox XP prestige', frame: null, link: '' }], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } });
   expect(keywords).toEqual(['Cat', 'Simulator', 'Roblox', 'XP', 'prestige']);
-  expect(boardKeywords({ title: Array.from({ length: 200 }, (_, i) => `name${i}`).join(' '), items: [], selection: [] })).toHaveLength(100);
+  expect(boardKeywords({ title: Array.from({ length: 200 }, (_, i) => `name${i}`).join(' '), items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } })).toHaveLength(100);
 });

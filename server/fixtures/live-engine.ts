@@ -15,7 +15,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
 let speech: { onPhrase?: (text: string) => void; onPartial: (text: string) => void; onTurn: (text: string) => void } | undefined;
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class {
   constructor(callbacks: NonNullable<typeof speech>) { speech = callbacks; }
-  async connect() {} send() {} stop() {} flushPhrases() {} resetPhrases() { speech?.onPartial(''); }
+  setMuted() {} async connect() {} send() {} stop() {} flushPhrases() {} resetPhrases() { speech?.onPartial(''); }
 } }));
 mock.module('../../src/voice/microphone', () => ({ captureMicrophone: async () => () => {} }));
 mock.module('../../src/voice/tts', () => ({ TextToSpeech: class { constructor() { throw new Error('TTS must never open'); } } }));
@@ -23,7 +23,7 @@ Object.defineProperty(globalThis, 'AudioContext', { value: class { state = 'runn
 const { ConversationEngine } = await import('../../src/conversation/engine/conversation-engine');
 const board = new BoardState();
 const bridge: BoardBridge = { getSummary: board.summary, apply: board.apply, showPending() {}, clearPending() {} };
-const engine = new ConversationEngine(bridge); await engine.startVoice();
+const engine = new ConversationEngine(bridge, { pipeline: false }); await engine.startVoice();
 const send = (index: number, data: string) => requests[index]?.stream.enqueue(new TextEncoder().encode(data));
 const finish = async (index: number) => { send(index, '{"type":"done"}\n'); requests[index]?.stream.close(); await Bun.sleep(5); };
 speech?.onPhrase?.('a habit tracker,');
@@ -49,7 +49,7 @@ expect(requests[4]?.input.utterance.length).toBe(3000); await finish(4); expect(
 engine.stopVoice();
 
 // Pauses wait for all drawing, issue one suggestion pass, and never repeat without speech.
-const paused = new ConversationEngine(bridge); await paused.startVoice();
+const paused = new ConversationEngine(bridge, { pipeline: false }); await paused.startVoice();
 const base = requests.length;
 speech?.onPhrase?.('Build a main screen');
 speech?.onPhrase?.('with a habit list'); speech?.onTurn('');
@@ -80,7 +80,7 @@ expect(requests).toHaveLength(base + 6);
 
 // Use the real chunker: its 350ms commit must not restart the 1.5s word-silence clock.
 const { PhraseChunker } = await import('../../src/voice/phrase-chunker');
-const timed = new ConversationEngine(bridge);
+const timed = new ConversationEngine(bridge, { pipeline: false });
 const chunker = new PhraseChunker({ onPartial: timed.receivePartial, onPhrase: timed.receivePhrase });
 const timedBase = requests.length; const lastWord = performance.now();
 chunker.addText('show all my habits for today');
@@ -90,7 +90,7 @@ expect(requests[timedBase + 1]?.input.mode).toBe('suggest');
 timed.interrupt(); chunker.reset();
 
 // Queue a follow-up before a mockup arrives; dispatch must include its actual components.
-const screens = new ConversationEngine(bridge); const screenBase = requests.length;
+const screens = new ConversationEngine(bridge, { pipeline: false }); const screenBase = requests.length;
 screens.receivePhrase('Draw a phone main screen'); screens.receivePhrase('Add a weekly chart');
 const mockup = { op: 'add_mockup', id: 'main-screen', title: 'Main screen', device: 'phone', placement: { kind: 'auto' }, components: [
   { kind: 'header', label: 'Today' }, { kind: 'list', label: 'Read a chapter' }, { kind: 'button', label: 'Check in' }, { kind: 'tabbar', label: 'Today,Friends' },

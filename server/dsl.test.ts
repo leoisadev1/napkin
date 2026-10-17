@@ -67,3 +67,11 @@ test('diagram quoted delimiters preserve node and link labels', () => {
   if (line?.kind !== 'op' || line.op.op !== 'add_diagram') throw new Error('Missing diagram');
   expect(line.op.nodes[0]?.label).toBe('A | B'); expect(line.op.links[0]?.label).toBe('yes; continue');
 });
+
+test('here and at placements address the pointer or existing item across drawing commands', () => {
+  expect(parseDrawingLine('box payment blue here "Payment"')).toEqual({ kind: 'op', op: { op: 'add_shape', id: 'payment', shape: 'box', color: 'blue', label: 'Payment', placement: { kind: 'at_pointer' } } });
+  expect(parseDrawingLine('move payment at:sketch')).toEqual({ kind: 'op', op: { op: 'move', id: 'payment', placement: { kind: 'at', target: 'sketch' } } });
+  const mockup = parseDrawingLine('phone login here "Login" | header:Login | input:Email | input:Password | button:Sign in');
+  expect(mockup?.kind === 'op' && mockup.op.op === 'add_mockup' && mockup.op.placement).toEqual({ kind: 'at_pointer' });
+  expect(parseDrawingLine('box bad blue at: "Invalid"')).toBeUndefined();
+});

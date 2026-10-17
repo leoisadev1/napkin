@@ -6,7 +6,7 @@ import { voiceSession } from './voice-smoke';
 import { PCMResampler, decodePCM, toBase64 } from '../src/voice/pcm';
 const dir = process.env.RTW_EVIDENCE_DIR ?? '/tmp/rtw-accuracy'; await mkdir(dir, { recursive: true });
 const headers = { 'x-api-key': config().GRADIUM_API_KEY, 'content-type': 'application/json' };
-const voicesResponse = await fetch('https://api.gradium.ai/api/voices/', { headers });
+const voicesResponse = await fetch('https://api.gradium.ai/api/voices/', { headers, signal: AbortSignal.timeout(10000) });
 const raw: unknown = await voicesResponse.json();
 const list = z.array(z.object({ uid: z.string(), language: z.string().optional() })).safeParse(raw);
 const voices = process.env.RTW_TEST_VOICES?.split(',') ?? (list.success ? list.data.filter(v => !v.language || v.language === 'en').map(v => v.uid).slice(0, 3) : ['YTpq7expH9539ERJ']);
@@ -27,7 +27,7 @@ export function wordErrors(reference: string, actual: string) {
 const corpus: { script: string; voice: string; frames: Uint8Array[] }[] = [];
 for (const [i, script] of scripts.entries()) {
   const voice = voices[i % voices.length] ?? voices[0] ?? 'YTpq7expH9539ERJ';
-  const path = `${dir}/sample-${i}-${voice}.wav`;
+  const path = process.env.RTW_REUSE_CORPUS === '1' ? `${dir}/sample-${i}.wav` : `${dir}/sample-${i}-${voice}.wav`;
   if (!await Bun.file(path).exists()) {
     const response = await fetch('https://api.gradium.ai/api/post/speech/tts', { method: 'POST', headers, body: JSON.stringify({ text: script, voice_id: voice, output_format: 'wav', only_audio: true }), signal: AbortSignal.timeout(30000) });
     if (!response.ok) throw new Error(`TTS ${response.status}`); await Bun.write(path, await response.arrayBuffer());

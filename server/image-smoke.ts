@@ -1,7 +1,7 @@
 import { handleRequest } from './index';
 import { parseAgentStream } from '../src/agent/client';
 const started = performance.now(); let pending = false; let image = false; let done = false;
-const response = await handleRequest(new Request('http://smoke/api/agent', { method: 'POST', signal: AbortSignal.timeout(90000), body: JSON.stringify({ mode: 'turn', utterance: 'Generate one concept image of Cat Simulator, a playful Roblox cat adventure, colourful low-poly islands. Use the image command.', history: [], board: { title: 'Cat Simulator', items: [], selection: [] } }) }));
+const response = await handleRequest(new Request('http://smoke/api/agent', { method: 'POST', signal: AbortSignal.timeout(90000), body: JSON.stringify({ mode: 'turn', utterance: 'Generate one concept image of Cat Simulator, a playful Roblox cat adventure, colourful low-poly islands. Use the image command.', history: [], board: { title: 'Cat Simulator', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
 if (!response.body) throw new Error('No response body');
 for await (const event of parseAgentStream(response.body)) {
   if (event.type === 'error') throw new Error(event.message);

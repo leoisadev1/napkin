@@ -35,6 +35,8 @@ function placement(parts: Token[]) {
   if (!parts.length) return { kind: 'auto' };
   if (parts.length !== 1) throw new Error('Invalid placement');
   const token = word(parts[0]);
+  if (token === 'here') return { kind: 'at_pointer' };
+  if (/^at:[^:]+$/.test(token)) return { kind: 'at', target: token.slice(3) };
   if (token === 'auto') return { kind: 'auto' };
   if (/^in:[^:]+$/.test(token)) return { kind: 'inside', frame: token.slice(3) };
   if (/^near:[^:]+:[^:]+$/.test(token)) {

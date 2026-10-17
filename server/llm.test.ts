@@ -22,7 +22,7 @@ test('live mode pins none on the wire despite dev defaults without parallel spee
     process.env.DEV_LLM_BASE_URL = `http://127.0.0.1:${proxy.port}/v1`; process.env.DEV_LLM_MODEL = 'gpt-6.1-sol';
     for (const effort of ['none', 'minimal', 'low']) {
       process.env.DEV_LLM_REASONING_EFFORT = effort;
-      await runAgent({ request: new Request('http://test/api/agent'), input: { mode: 'live', utterance: 'An item', history: [], board: { title: '', items: [], selection: [] } }, signal: AbortSignal.timeout(5000), emit: event => { expect(event.type).not.toBe('say'); } });
+      await runAgent({ request: new Request('http://test/api/agent'), input: { mode: 'live', utterance: 'An item', history: [], board: { title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }, signal: AbortSignal.timeout(5000), emit: event => { expect(event.type).not.toBe('say'); } });
     }
     expect(efforts).toEqual(['none', 'none', 'none']);
   } finally {

@@ -24,12 +24,13 @@ if (!wav) {
 const wavBytes = new Uint8Array(await Bun.file(wav).arrayBuffer());
 const pcm = wavBytes.subarray(44);
 const frames = new PCMResampler(48000).push(decodePCM(wavBytes.subarray(44)));
-type Measurement = { phrase: string; firstWordAt: number; lastWordAt: number; committedAt: number; requestAt?: number; firstOpAt?: number };
+type Measurement = { phrase: string; spokenAt?: number; firstWordAt: number; lastWordAt: number; committedAt: number; requestAt?: number; firstOpAt?: number; completeAt?: number };
 let activeRefines = 0;
 const refineMeasurements: { ms: number; completed: boolean; image: boolean }[] = [];
 const suggestionRequests: { at: number; utterance: string }[] = [];
 const suggestionArrivals: { at: number; items: string[] }[] = [];
-const measurements: Measurement[] = []; let awaiting: Measurement[] = []; let drawing: Measurement[] = [];
+const measurements: Measurement[] = []; const awaiting: Measurement[] = [];
+const byPhraseId = new Map<string, Measurement>();
 const board = new BoardState();
 const diagramKinds: string[] = [];
 let audioStartedAt: number | undefined; let opsWhileAudioPlaying = 0;
@@ -37,8 +38,12 @@ const engine = new ConversationEngine({ getSummary: board.summary, apply: op => 
   const now = performance.now();
   if (op.op === 'add_diagram') diagramKinds.push(op.kind);
   if (audioStartedAt !== undefined && now < audioStartedAt + pcm.length / 96) opsWhileAudioPlaying++;
-  for (const row of drawing) row.firstOpAt ??= now; board.apply(op);
-}, showPending() {}, clearPending() {} });
+  board.apply(op);
+}, showPending() {}, clearPending() {} }, { pipeline: process.env.RTW_PIPELINE !== '0', onTiming: event => {
+  if (event.stage === 'request') {
+    for (const id of event.ids) { const row = awaiting.shift(); if (row) { row.requestAt = event.at; byPhraseId.set(id, row); } }
+  } else for (const id of event.ids) { const row = byPhraseId.get(id); if (row) { if (event.stage === 'first_op') row.firstOpAt = event.at; else row.completeAt = event.at; } }
+} });
 let previousSuggestions = engine.getSnapshot().suggestions;
 engine.subscribe(() => {
   const items = engine.getSnapshot().suggestions;
@@ -50,12 +55,6 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
     if (input === '/api/agent') {
       const request = AgentRequest.parse(JSON.parse(String(init?.body)));
       if (request.mode === 'suggest') suggestionRequests.push({ at: performance.now(), utterance: request.utterance });
-      else if (request.mode !== 'refine') {
-        drawing = []; let length = 0;
-        while (awaiting[0] && length < request.utterance.length) {
-          const row = awaiting.shift(); if (row) { row.requestAt = performance.now(); drawing.push(row); length += row.phrase.length + (length ? 1 : 0); }
-        }
-      }
     }
     const isRefine = input === '/api/agent' && AgentRequest.parse(JSON.parse(String(init?.body))).mode === 'refine';
     const at = performance.now(); if (isRefine) activeRefines++;
@@ -65,13 +64,15 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
   }
   return originalFetch(input, init);
 }, { preconnect: originalFetch.preconnect });
-let firstWordAt: number | undefined; let lastWordAt = 0; let ended = false;
-const stt = new SpeechToText({ onPartial: text => {
+let spokenAt: number | undefined; let firstWordAt: number | undefined; let lastWordAt = 0; let ended = false;
+const stt = new SpeechToText({ delayInFrames: Number(process.env.RTW_STT_DELAY ?? 10),
+  chunking: process.env.RTW_BASELINE_CHUNKER === '1' ? { minWords: 5, quietMs: 350 } : undefined,
+  onText: (_text, startSeconds) => { if (spokenAt === undefined && startSeconds !== undefined && audioStartedAt !== undefined) spokenAt = audioStartedAt + startSeconds * 1000; }, onPartial: text => {
   if (text) { firstWordAt ??= performance.now(); lastWordAt = performance.now(); }
   engine.receivePartial(text);
 }, onPhrase: phrase => {
-  const row: Measurement = { phrase, firstWordAt: firstWordAt ?? performance.now(), lastWordAt, committedAt: performance.now() };
-  firstWordAt = undefined; measurements.push(row); awaiting.push(row); engine.receivePhrase(phrase);
+  const row: Measurement = { phrase, spokenAt, firstWordAt: firstWordAt ?? performance.now(), lastWordAt, committedAt: performance.now() };
+  spokenAt = undefined; firstWordAt = undefined; measurements.push(row); awaiting.push(row); engine.receivePhrase(phrase);
 }, onTurn: () => { ended = true; engine.finishSpokenStretch(); }, onError: error => { throw error; } });
 try {
   await stt.connect();
@@ -80,7 +81,7 @@ try {
   const limit = performance.now() + 45_000;
   while ((!ended || engine.getSnapshot().sketching || awaiting.length || !suggestionArrivals.length || activeRefines) && performance.now() < limit) await Bun.sleep(50);
   if (engine.getSnapshot().sketching || awaiting.length) throw new Error('Simulation did not drain');
-  const rows = measurements.map(row => ({ phrase: row.phrase, commitMs: Math.round(row.committedAt - row.lastWordAt), queueMs: row.requestAt === undefined ? null : Math.round(row.requestAt - row.committedAt), lastWordToOpMs: row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.lastWordAt), firstWordToOpMs: row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.firstWordAt), requestToOpMs: row.firstOpAt === undefined || row.requestAt === undefined ? null : Math.round(row.firstOpAt - row.requestAt) }));
+  const rows = measurements.map(row => ({ phrase: row.phrase, noOp: row.firstOpAt === undefined && row.completeAt !== undefined, spokenToTextMs: row.spokenAt === undefined ? null : Math.round(row.firstWordAt - row.spokenAt), spokenToOpMs: row.spokenAt === undefined || row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.spokenAt), textSpanMs: Math.round(row.lastWordAt - row.firstWordAt), commitMs: Math.round(row.committedAt - row.lastWordAt), queueMs: row.requestAt === undefined ? null : Math.round(row.requestAt - row.committedAt), lastWordToOpMs: row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.lastWordAt), firstWordToOpMs: row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.firstWordAt), requestToOpMs: row.firstOpAt === undefined || row.requestAt === undefined ? null : Math.round(row.firstOpAt - row.requestAt) }));
   const result = { wav, diagramKinds, refineMeasurements, opsWhileAudioPlaying, audioSeconds: pcm.length / 96000,
     suggestionRequests: suggestionRequests.map(row => ({ ...row, at: Math.round(row.at - (audioStartedAt ?? 0)) })),
     suggestionArrivals: suggestionArrivals.map(row => ({ ...row, at: Math.round(row.at - (audioStartedAt ?? 0)) })), model: process.env.DEV_LLM_MODEL, rows, board: board.summary() };

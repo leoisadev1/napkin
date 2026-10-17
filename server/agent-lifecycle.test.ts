@@ -24,7 +24,7 @@ test('failed DSL stream cancels queued image work with no parallel voice call', 
   } });
   process.env.DEV_LLM_BASE_URL = `http://127.0.0.1:${proxy.port}/v1`;
   try {
-    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Draw a leaf image', history: [], board: { title: '', items: [], selection: [] } }) }));
+    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Draw a leaf image', history: [], board: { title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
     if (!response.body) throw new Error('No response body');
     const events = [];
     for await (const event of parseAgentStream(response.body)) events.push(event);
@@ -49,7 +49,7 @@ test('image frames and their dependent children/edges emit in dependency order w
   } });
   process.env.DEV_LLM_BASE_URL = `http://127.0.0.1:${proxy.port}/v1`;
   try {
-    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Draw a gallery', history: [], board: { title: '', items: [], selection: [] } }) }));
+    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Draw a gallery', history: [], board: { title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
     if (!response.body) throw new Error('No response body');
     const operations: string[] = [];
     for await (const event of parseAgentStream(response.body)) {
@@ -74,7 +74,7 @@ for (const scenario of ['delete-frame', 'failed-clear']) {
     } });
     process.env.DEV_LLM_BASE_URL = `http://127.0.0.1:${proxy.port}/v1`;
     try {
-      const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Change gallery', history: [], board: { title: '', items: [{ id: 'gallery', kind: 'frame', label: 'Gallery', frame: null, link: '' }], selection: [] } }) }));
+      const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Change gallery', history: [], board: { title: '', items: [{ origin: 'agent', bounds: { x: 0, y: 0, w: 200, h: 100 }, id: 'gallery', kind: 'frame', label: 'Gallery', frame: null, link: '' }], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
       if (!response.body) throw new Error('No response body');
       const operations: string[] = []; const events: string[] = [];
       for await (const event of parseAgentStream(response.body)) {
@@ -98,12 +98,35 @@ test('existing images prevent automatic repeats while explicit voice requests al
   try {
     for (const mode of ['live', 'turn', 'refine']) {
       const before = images;
-      const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode, utterance: 'Improve Cat Simulator progression', history: [], board: { title: 'Cat Simulator', items: [{ id: 'concept', kind: 'image', label: 'Concept', frame: null, link: '' }], selection: [] } }) }));
+      const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode, utterance: 'Improve Cat Simulator progression', history: [], board: { title: 'Cat Simulator', items: [{ origin: 'agent', bounds: { x: 0, y: 0, w: 200, h: 100 }, id: 'concept', kind: 'image', label: 'Concept', frame: null, link: '' }], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
       if (!response.body) throw new Error('No response body'); for await (const _event of parseAgentStream(response.body)) { /* drain */ }
       expect(images).toBe(before);
     }
-    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'live', utterance: 'Please add another image of a cat', history: [], board: { title: 'Cat Simulator', items: [{ id: 'concept', kind: 'image', label: 'Concept', frame: null, link: '' }], selection: [] } }) }));
+    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'live', utterance: 'Please add another image of a cat', history: [], board: { title: 'Cat Simulator', items: [{ origin: 'agent', bounds: { x: 0, y: 0, w: 200, h: 100 }, id: 'concept', kind: 'image', label: 'Concept', frame: null, link: '' }], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
     if (!response.body) throw new Error('No response body'); for await (const _event of parseAgentStream(response.body)) { /* drain */ }
     expect(images).toBe(1);
   } finally { if (previous === undefined) delete process.env.DEV_LLM_BASE_URL; else process.env.DEV_LLM_BASE_URL = previous; proxy.stop(true); }
 });
+
+test('each completed DSL line reaches the HTTP client before the provider finishes', async () => {
+  const previous = process.env.DEV_LLM_BASE_URL;
+  let complete: (() => void) | undefined;
+  const proxy = Bun.serve({ port: 0, fetch() {
+    return new Response(new ReadableStream<Uint8Array>({ async start(controller) {
+      const delta = { id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: { role: 'assistant', content: 'box first blue here "First"\n' }, finish_reason: null }] };
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delta)}\n\n`));
+      await new Promise<void>(resolve => { complete = resolve; });
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n')); controller.close();
+    } }), { headers: { 'content-type': 'text/event-stream' } });
+  } });
+  process.env.DEV_LLM_BASE_URL = `http://127.0.0.1:${proxy.port}/v1`;
+  try {
+    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'live', utterance: 'Draw a box here', history: [], board: { title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }) }));
+    if (!response.body) throw new Error('No stream');
+    const reader = response.body.getReader();
+    const result = await Promise.race([reader.read(), Bun.sleep(2000).then(() => { throw new Error('Buffered first op'); })]);
+    expect(new TextDecoder().decode(result.value)).toContain('"op":"add_shape"');
+    expect(response.headers.get('x-accel-buffering')).toBe('no');
+    complete?.(); await reader.cancel();
+  } finally { complete?.(); if (previous === undefined) delete process.env.DEV_LLM_BASE_URL; else process.env.DEV_LLM_BASE_URL = previous; proxy.stop(true); }
+}, 5000);

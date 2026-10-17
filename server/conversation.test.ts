@@ -28,3 +28,9 @@ test('unsupported native 24kHz microphone capture falls back to the device rate'
   const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   expect(error).toBe(''); expect(exit).toBe(0);
 }, 5000);
+
+for (const fixture of ['mute-engine', 'pipeline-engine']) test(`${fixture} exercises the public conversation API`, async () => {
+  const child = Bun.spawn(['bun', `server/fixtures/${fixture}.ts`], { stdout: 'pipe', stderr: 'pipe' });
+  const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  expect(error).toBe(''); expect(exit).toBe(0);
+}, 5000);

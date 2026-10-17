@@ -8,6 +8,6 @@ export function useConversation(bridge: BoardBridge): Conversation {
     const abort = new AbortController(); void engine.loadStatus(abort.signal);
     return () => { abort.abort(); engine.stopVoice(); };
   }, [engine]);
-  return { ...snapshot, subscribeLevel: engine.subscribeLevel, subscribeOutputLevel: engine.subscribeOutputLevel,
+  return { ...snapshot, setMuted: engine.setMuted, subscribeLevel: engine.subscribeLevel, subscribeOutputLevel: engine.subscribeOutputLevel,
     startVoice: engine.startVoice, stopVoice: engine.stopVoice, sendText: engine.sendText, pickSuggestion: engine.pickSuggestion, interrupt: engine.interrupt };
 }

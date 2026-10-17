@@ -4,7 +4,7 @@ import type { BoardBridge } from '../../src/conversation/types';
 let captureReady: ((stop: () => void) => void) | undefined;
 
 mock.module('../../src/voice/microphone', () => ({ captureMicrophone: () => new Promise<() => void>(resolve => { captureReady = resolve; }) }));
-mock.module('../../src/voice/stt', () => ({ SpeechToText: class { async connect() {} stop() {} resetPhrases() {} send() {} } }));
+mock.module('../../src/voice/stt', () => ({ SpeechToText: class { setMuted() {} async connect() {} stop() {} resetPhrases() {} send() {} } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class {
   state = 'running'; async resume() {} async close() { this.state = 'closed'; }
 } });
@@ -15,7 +15,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
   throw new Error('Unexpected fixture fetch');
 }, { preconnect: originalFetch.preconnect });
 const { ConversationEngine } = await import('../../src/conversation/engine/conversation-engine');
-const bridge: BoardBridge = { getSummary: () => ({ title: '', items: [], selection: [] }), apply() {}, showPending() {}, clearPending() {} };
+const bridge: BoardBridge = { getSummary: () => ({ title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } }), apply() {}, showPending() {}, clearPending() {} };
 const engine = new ConversationEngine(bridge);
 const start = engine.startVoice();
 for (let attempts = 0; attempts < 100 && !captureReady; attempts++) await Bun.sleep(1);

@@ -4,17 +4,17 @@ import { agentEvents } from '../../agent/client';
 import { boardKeywords } from '../../voice/keywords';
 import { captureMicrophone } from '../../voice/microphone';
 import { SpeechToText } from '../../voice/stt';
-import type { BoardBridge, ConversationPhase, TranscriptEntry } from '../types';
+import type { BoardBridge, Conversation, ConversationPhase, TranscriptEntry } from '../types';
 
-type Snapshot = { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
+type Snapshot = Pick<Conversation, 'refining' | 'pendingPhrases' | 'muted'> & { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
 export class ConversationEngine {
-  private state: Snapshot = { sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false };
+  private state: Snapshot = { refining: false, pendingPhrases: [], muted: false, sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false };
   private listeners = new Set<() => void>();
   private levels = new Set<(level: number) => void>();
   private outputLevels = new Set<(level: number) => void>();
   private history: ChatTurn[] = [];
   private pending = new Set<string>();
-  private active: AbortController | undefined;
+  private flights: { abort: AbortController; text: string; mode: 'live' | 'turn'; released: boolean; done: boolean; firstOp: boolean; ops: BoardOp[]; ids: string[] }[] = [];
   private stt: SpeechToText | undefined;
   private refineRequest: AbortController | undefined;
   private imageAttempted = false;
@@ -25,7 +25,7 @@ export class ConversationEngine {
   private suggestionRequest: AbortController | undefined;
   private suggestionStretch: string | undefined;
   private pauseTimer: ReturnType<typeof setTimeout> | undefined;
-  private queue: { mode: 'live' | 'turn'; text: string; history: ChatTurn[]; rollbackHistory: ChatTurn[] }[] = [];
+  private queue: { ids: string[]; mode: 'live' | 'turn'; text: string; history: ChatTurn[]; rollbackHistory: ChatTurn[] }[] = [];
   private uncommittedWords = false;
   private diagrams = new Map<string, Extract<BoardOp, { op: 'add_diagram' }>>();
   private mockups = new Map<string, Extract<BoardOp, { op: 'add_mockup' }>>();
@@ -34,7 +34,8 @@ export class ConversationEngine {
   private stopMic: (() => void) | undefined;
   private voiceGeneration = 0;
   private bridge: BoardBridge;
-  constructor(bridge: BoardBridge) { this.bridge = bridge; }
+  private options;
+  constructor(bridge: BoardBridge, options: { pipeline?: boolean; onTiming?: (event: { stage: 'request' | 'first_op' | 'complete'; ids: string[]; text: string; at: number }) => void } = {}) { this.bridge = bridge; this.options = options; }
   setBridge(bridge: BoardBridge) { this.bridge = bridge; }
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -70,7 +71,7 @@ export class ConversationEngine {
         onTurn: () => this.finishSpokenStretch(),
         onError: error => { if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error.message } }); } },
       });
-      this.stt = stt;
+      this.stt = stt; stt.setMuted(this.state.muted);
       await stt.connect();
       if (generation !== this.voiceGeneration) { stt.stop(); return; }
       const capture = () => captureMicrophone({ context, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)) });
@@ -89,6 +90,18 @@ export class ConversationEngine {
       if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Could not start microphone' } }); }
     } finally { if (generation !== this.voiceGeneration && context.state !== 'closed') await context.close(); }
   };
+  setMuted = (muted: boolean) => {
+    if (muted === this.state.muted) return;
+    // STT commits a substantial partial synchronously before suppressing subsequent text.
+    this.stt?.setMuted(muted);
+    this.update({ muted, partial: '' });
+    if (muted) {
+      this.suggestionRequest?.abort(); this.suggestionRequest = undefined; this.suggestionStretch = undefined;
+      clearTimeout(this.pauseTimer); this.uncommittedWords = false;
+      const id = this.stretchId; this.stretchId = undefined;
+      this.update({ transcript: this.state.transcript.map(entry => entry.id === id ? { ...entry, final: true } : entry) });
+    }
+  };
   stopVoice = () => {
     ++this.voiceGeneration;
     this.stt?.stop(); this.stt = undefined; this.stopMic?.(); this.stopMic = undefined;
@@ -97,7 +110,7 @@ export class ConversationEngine {
     this.levels.forEach(listener => listener(0)); this.update({ phase: { kind: 'idle' }, partial: '' });
   };
   interrupt = () => {
-    this.active?.abort(); this.active = undefined;
+    this.flights.forEach(flight => flight.abort.abort()); this.flights = [];
     const undispatched = this.queue[0];
     if (undispatched) this.history = undispatched.rollbackHistory;
     this.queue = [];
@@ -105,12 +118,12 @@ export class ConversationEngine {
     this.stt?.resetPhrases(); this.stretchId = undefined; this.uncommittedWords = false;
     for (const id of this.pending) this.bridge.clearPending(id);
     this.pending.clear();
-    this.update({ sketching: false, partial: '', phase: this.resting(), transcript: this.state.transcript.map(entry => ({ ...entry, final: true })) });
+    this.update({ sketching: false, pendingPhrases: [], partial: '', phase: this.resting(), transcript: this.state.transcript.map(entry => ({ ...entry, final: true })) });
   };
   private cancelSuggestions() {
     this.suggestionStretch = undefined;
     this.refineStretch = undefined;
-    this.refineRequest?.abort(); this.refineRequest = undefined;
+    this.refineRequest?.abort(); this.refineRequest = undefined; this.update({ refining: false });
     this.suggestionRequest?.abort(); this.suggestionRequest = undefined;
   }
   private newSpeech() {
@@ -122,6 +135,7 @@ export class ConversationEngine {
     }, 1500);
   }
   receivePartial = (partial: string) => {
+    if (this.state.muted) return;
     if (partial.trim() && partial !== this.state.partial) { this.uncommittedWords = true; this.newSpeech(); }
     this.update({ partial });
   };
@@ -159,7 +173,9 @@ export class ConversationEngine {
     // Each history snapshot excludes its own new phrase, even when it waits behind another request.
     for (let offset = 0; offset < text.length; offset += 4000) {
       const part = text.slice(offset, offset + 4000);
-      this.queue.push({ mode, text: part, rollbackHistory: this.history.slice(-20), history: [...this.history.slice(-19), ...(mode === 'live' ? [{ role: 'user', text: `Whole current speaking stretch so far (NEW words are the request utterance): ${this.stretchText.slice(-3900)}` } satisfies ChatTurn] : [])] });
+      const id = crypto.randomUUID();
+      this.update({ pendingPhrases: [...this.state.pendingPhrases, { id, text: part, status: 'queued' }] });
+      this.queue.push({ ids: [id], mode, text: part, rollbackHistory: this.history.slice(-20), history: [...this.history.slice(-19), ...(mode === 'live' ? [{ role: 'user', text: `Whole current speaking stretch so far (NEW words are the request utterance): ${this.stretchText.slice(-3900)}` } satisfies ChatTurn] : [])] });
       this.history = [...this.history, { role: 'user', text: part } satisfies ChatTurn].slice(-20);
     }
     void this.drain();
@@ -205,10 +221,10 @@ export class ConversationEngine {
 
   private async refine() {
     const text = this.refineStretch;
-    if (!text || this.refineRequest || this.active || this.queue.length || this.liveRevision <= this.refinedRevision) return;
+    if (!text || this.refineRequest || this.flights.length || this.queue.length || this.liveRevision <= this.refinedRevision) return;
     this.refineStretch = undefined;
     const revision = this.liveRevision;
-    const abort = new AbortController(); this.refineRequest = abort;
+    const abort = new AbortController(); this.refineRequest = abort; this.update({ refining: true });
     const timer = setTimeout(() => abort.abort(), 8000);
     const ops: BoardOp[] = []; const pending = new Set<string>();
     let done = false;
@@ -224,18 +240,18 @@ export class ConversationEngine {
       }
       if (done && !abort.signal.aborted) {
         // Synchronous commit: no partial refine is visible while streaming or after cancellation.
-        for (const op of ops) this.applyOperation(op);
+        for (const op of [...ops.filter(op => op.op === 'delete'), ...ops.filter(op => op.op !== 'delete')]) this.applyOperation(op);
         this.refinedRevision = revision;
       }
     } catch { /* Optional refinement preserves the live sketch on timeout/failure. */ }
     finally {
       clearTimeout(timer); for (const id of pending) this.bridge.clearPending(id);
-      if (this.refineRequest === abort) this.refineRequest = undefined;
+      if (this.refineRequest === abort) { this.refineRequest = undefined; this.update({ refining: false }); }
     }
   }
   private async suggest() {
     const text = this.suggestionStretch;
-    if (!text || this.suggestionRequest || this.active || this.queue.length) return;
+    if (!text || this.suggestionRequest || this.flights.length || this.queue.length) return;
     this.suggestionStretch = undefined;
     const abort = new AbortController(); this.suggestionRequest = abort;
     try {
@@ -251,23 +267,48 @@ export class ConversationEngine {
     }
   }
   private async drain() {
-    if (this.active) return;
+    const prior = this.flights.at(-1);
+    if (prior && (this.options.pipeline === false || this.flights.length >= 2 || prior.mode !== 'live' || !prior.released || this.queue[0]?.mode !== 'live')) return;
     const batch = this.queue.shift();
-    if (!batch) { void this.refine(); void this.suggest(); return; }
+    if (!batch) { if (!this.flights.length) { void this.refine(); if (!this.state.muted) void this.suggest(); } return; }
     while (batch.mode === 'live' && this.queue[0]?.mode === 'live' && batch.text.length + (this.queue[0]?.text.length ?? 0) + 1 <= 4000) {
-      const next = this.queue.shift(); if (next) { batch.text += ` ${next.text}`; const context = next.history.at(-1); if (context?.text.startsWith('Whole current speaking stretch')) batch.history = [...batch.history.filter(turn => !turn.text.startsWith('Whole current speaking stretch')), context]; }
+      const next = this.queue.shift(); if (next) {
+        batch.text += ` ${next.text}`; batch.ids.push(...next.ids);
+        const context = next.history.at(-1); if (context?.text.startsWith('Whole current speaking stretch')) batch.history = [...batch.history.filter(turn => !turn.text.startsWith('Whole current speaking stretch')), context];
+      }
     }
-    const abort = new AbortController(); this.active = abort;
+    const abort = new AbortController();
+    const flight = { abort, text: batch.text, mode: batch.mode, released: false, done: false, firstOp: false, ops: new Array<BoardOp>(), ids: batch.ids };
+    this.flights.push(flight);
+    this.options.onTiming?.({ stage: 'request', ids: batch.ids, text: batch.text, at: performance.now() });
+    const release = () => { flight.released = true; void this.drain(); };
+    const pipelineTimer = setTimeout(release, 600);
+    const applyReady = () => {
+      while (this.flights[0]) {
+        const head = this.flights[0];
+        for (const op of head.ops.splice(0)) {
+          if (!head.firstOp) { head.firstOp = true; this.options.onTiming?.({ stage: 'first_op', ids: head.ids, text: head.text, at: performance.now() }); }
+          this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !head.ids.includes(phrase.id)) });
+          this.applyOperation(op);
+          if (head.mode === 'live' && ['add_shape', 'add_diagram', 'add_mockup', 'add_image', 'update'].includes(op.op)) this.liveRevision++;
+        }
+        if (!head.done) break;
+        this.flights.shift();
+        this.options.onTiming?.({ stage: 'complete', ids: head.ids, text: head.text, at: performance.now() });
+        this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !head.ids.includes(phrase.id)) });
+      }
+    };
+    const pending = new Set<string>();
     const replyId = crypto.randomUUID(); let reply = ''; let done = false;
-    this.update({ sketching: true, phase: this.stt ? this.resting() : { kind: 'thinking' } });
+    this.update({ pendingPhrases: this.state.pendingPhrases.map(phrase => batch.ids.includes(phrase.id) ? { ...phrase, status: 'drawing' } : phrase), sketching: true, phase: this.stt ? this.resting() : { kind: 'thinking' } });
     try {
       const board = this.bridge.getSummary();
-      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: this.requestHistory(batch.history, board), board }, abort.signal)) {
+      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: this.requestHistory([...batch.history, ...this.flights.filter(other => other !== flight).map(other => ({ role: 'user', text: `Being drawn by a parallel request; do not duplicate or replace its concepts: ${other.text}`.slice(0, 4000) } satisfies ChatTurn))].slice(-20), board), board }, abort.signal)) {
         if (abort.signal.aborted) return;
         switch (event.type) {
-          case 'op': this.applyOperation(event.op); if (batch.mode === 'live' && ['add_shape', 'add_diagram', 'add_mockup', 'add_image', 'update'].includes(event.op.op)) this.liveRevision++; break;
-          case 'pending': this.imageAttempted = true; this.pending.add(event.id); this.bridge.showPending(event); break;
-          case 'pending_done': this.pending.delete(event.id); this.bridge.clearPending(event.id); break;
+          case 'op': flight.ops.push(event.op); applyReady(); release(); break;
+          case 'pending': this.imageAttempted = true; this.pending.add(event.id); pending.add(event.id); this.bridge.showPending(event); break;
+          case 'pending_done': this.pending.delete(event.id); pending.delete(event.id); this.bridge.clearPending(event.id); break;
           case 'suggestions': this.update({ suggestions: event.items }); break;
           case 'say': {
             reply += event.text;
@@ -285,10 +326,11 @@ export class ConversationEngine {
     } catch (error) {
       if (!abort.signal.aborted) this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Could not complete turn' } });
     } finally {
-      if (this.active === abort) {
-        this.active = undefined;
-        for (const id of this.pending) this.bridge.clearPending(id); this.pending.clear();
-        this.update({ sketching: false, ...(this.state.phase.kind === 'error' ? {} : { phase: this.resting() }),
+      clearTimeout(pipelineTimer);
+      if (this.flights.includes(flight)) {
+        flight.done = true; applyReady();
+        for (const id of pending) { this.bridge.clearPending(id); this.pending.delete(id); }
+        this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !flight.ids.includes(phrase.id)), sketching: this.flights.length > 0, ...(this.state.phase.kind === 'error' ? {} : { phase: this.resting() }),
           transcript: this.state.transcript.map(entry => entry.id === replyId ? { ...entry, final: true } : entry) });
         void this.drain();
       }

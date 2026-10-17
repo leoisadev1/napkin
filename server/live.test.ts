@@ -30,7 +30,7 @@ test.skipIf(!process.env.DEV_LLM_BASE_URL)('pause suggestions return 2-3 short n
   const suggestions: string[][] = [];
   const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', signal: AbortSignal.timeout(5000), body: JSON.stringify({
     mode: 'suggest', utterance: 'A habit tracker with daily check-ins, streaks and reminders.', history: [],
-    board: { title: 'Habit tracker', items: [], selection: [] },
+    board: { title: 'Habit tracker', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } },
   }) }));
   expect(response.status).toBe(200); if (!response.body) throw new Error('Missing stream');
   for await (const event of parseAgentStream(response.body)) {

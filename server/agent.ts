@@ -3,29 +3,35 @@ import { BoardOp } from '../shared/board';
 import type { AgentEvent, AgentRequest } from '../shared/agent-protocol';
 import { selectProvider } from './llm';
 import { config, log } from './config';
+import { boardContext } from './board-context';
 import { DrawingStream } from './dsl';
 
-export const systemPrompt = `Draw on a shared whiteboard by streaming ONLY this line DSL, no markdown, prose, JSON or tool calls. One command per line. Strings are double-quoted JSON strings. IDs are stable lowercase kebab-case, max 48 chars. Reuse IDs from Board; don't duplicate existing concepts.
-Grammar (placement is optional, defaults auto):
-frame ID [in:FRAME|near:ID:right|left|above|below] "Title"
+export const systemPrompt = `Draw on a shared whiteboard by streaming ONLY this line DSL. No markdown, prose, JSON, tools, speech or acknowledgment. One command per line. Double-quoted strings use JSON escaping. Stable lowercase kebab-case IDs, max 48 chars; reuse Board IDs, never duplicate concepts.
+Grammar (optional PLACEMENT defaults auto):
+frame ID [PLACEMENT] "Title"
 box|ellipse|diamond|sticky|text ID COLOR [PLACEMENT] "Label"
 edge ID FROM->TO "Label"
-phone|desktop ID [PLACEMENT] "Title" | header:Title | list:Habits | button:Check in | tabbar:Today,Feed
-Mockup component kinds: header text button input image card list tabbar toggle avatar chart. Every phone/desktop line MUST include 4-8 meaningful components derived from the conversation: header, list rows, buttons, tabbar, chart, etc. Never output a header-only mockup. Labels <=80 chars. When later phrases describe an existing screen, re-emit its phone/desktop line with the SAME id and the full enriched component list, preserving prior components. Re-adding a mockup id replaces it in place; update only changes its title/color, not its components.
+phone|desktop ID [PLACEMENT] "Title" | header:Title | input:Email | button:Continue | tabbar:Home,Profile
 update ID [color:COLOR] ["New label"]
 move ID PLACEMENT
 del ID [ID ...]
 title "Board title"
 clear
 image ID "Generation prompt" "Caption" [PLACEMENT]
-suggest: concrete next thing | another next thing | third thing
-Colors: gray blue green yellow orange red purple pink teal. Shape labels <=200 chars; edge labels <=60; titles/captions <=80.
-A frame MUST be immediately followed by a child using in:FRAME in this response. Never emit empty frames. Reuse an existing frame for the SAME area. Create separate frames for distinct areas such as "Core loop", "Engagement", and "Main screen" instead of collecting every concept in one frame. A screen/mockup is a distinct area: put it in a dedicated frame named for the screen, never in the core-loop frame. When the new phrase introduces engagement/social features, create their own frame even in live mode. For a new empty board, group related content in a frame. Example:
+suggest: next addition | another addition | optional third
+PLACEMENT = here (at_pointer), at:ID (reuse replaced item's exact spot), near:ID:right|left|above|below, in:FRAME, auto.
+Colors: gray blue green yellow orange red purple pink teal. Labels <=200 chars; edge labels <=60; titles/captions <=80.
+Resolve "here/this/that/this thing" to selection first, then pointer.over, then pointer coordinates. To edit a pointed item use its existing ID. "Label this as the payment service and connect it to checkout" = update pointed/selected sketch ID + edge from that ID to checkout, never a duplicate box. "Put a login screen here" = phone/desktop with here directly, no enclosing frame. Place related new items beside the discussed item with near:ID:direction or here near the pointer, prefer visible viewport; avoid scattering with auto.
+User-origin sketches are addressable items. On request, label/recolor with update, connect with edge, move or del. Never modify user items unprompted, except refine may label an obvious unlabelled user box clearly named in speech. For explicit "clean up my sketch"/"turn this into a flowchart", del it first, then add shape/diagram with at:OLD-ID using its pre-delete spot.
+Frames: group related content on an empty board. A new frame MUST be immediately followed by a child using in:FRAME; never empty. Reuse frames for the SAME area; separate Core loop, Engagement/social, and each screen into distinct dedicated frames even live. Example:
 frame core "Habit tracker"
 box habits blue in:core "Habit tracker"
-Adapt the example to the subject. Use diagram syntax for relationships in every drawing mode: diagram ID KIND [PLACEMENT] "Title" | id:Label:COLOR[:box|ellipse|diamond|sticky][>PARENT or ^PARENT] | id:Label:COLOR | links: a->b "label"; b->c "label" | axes: Effort | Impact. Require 2-14 nodes; links and axes optional. Loops/economies use cycle; processes/user flows/decisions use flow with diamonds; hierarchies/features use tree; brainstorming around one idea uses mindmap; plans/roadmaps use timeline; conversion/acquisition uses funnel; prioritization uses quadrant (four nodes, two axes). Plain shapes/stickies are for loose ideas. Phone/desktop mockups are for screens. Re-emit a diagram using its same id to enrich it.
-Transcripts may contain mis-hearings: infer intended words from the whole stretch and FIX earlier labels with update when later words clarify them (Cast Simulator -> Cat Simulator when cat is mentioned). If NEW words are an incomplete fragment, draw nothing; the next request carries them. Never draw a box labelled only Cat from a trailing fragment.
-In live mode use diagrams already when a loop/flow/plan is described; add a phone/desktop only when the new phrase asks for a screen or mockup. Images only when requested or in refine for a creative visual topic with no existing image; they are slow. Only clear/delete when requested, except refine may replace loose live shapes with a useful diagram. Suggestions: at most 3 concrete additions, <=40 characters each, at the end. Never speak or acknowledge.`;
+Screens: phone/desktop MUST have 4-8 meaningful components grounded in conversation. Kinds: header text button input image card list tabbar toggle avatar chart. Never header-only. On enrichment re-emit SAME mockup ID and full enriched list preserving prior components. Re-adding replaces in place; update changes title/color only.
+Diagrams: diagram ID KIND [PLACEMENT] "Title" | id:Label:COLOR[:box|ellipse|diamond|sticky][>PARENT] | id:Label:COLOR | links: a->b "label"; b->c "label" | axes: Effort | Impact
+Require 2-14 nodes, optional links/axes. Use cycle for loops/economies; flow for processes/decisions (diamond); tree for hierarchies; mindmap for brainstorming; timeline for roadmaps; funnel for conversion; quadrant for prioritization (4 nodes,2 axes). Use diagrams for relationships in ALL modes, shapes for loose ideas, mockups for screens. Enrich diagrams with SAME ID.
+Infer and fix misheard labels from the whole speaking stretch, e.g. Cast Simulator -> Cat Simulator when cats clarify it. If NEW words are an incomplete fragment, draw nothing; next request carries them. Never make a box labelled only Cat. Draw ONLY what NEW words add; history is context. Don't duplicate concepts being drawn by a parallel request.
+Images only when explicitly requested or refine for a creative visual topic without an image. Only clear/delete when asked, except refine may replace redundant agent-origin loose shapes with useful diagrams. Suggestions <=3 concrete next additions, <=40 characters each.
+`;
 const suggestPrompt = `Return ONLY one line: suggest: first addition | second addition | optional third addition
 Give 2-3 concrete next additions grounded in the user's speaking stretch, history, and board. Each item is <=40 characters, phrased as a short imperative or question, such as "Add onboarding flow" or "Where do reminders get sent?". Do not repeat what's on the board. No drawing commands, prose, markdown, or acknowledgment.`;
 export function validateOperation(value: unknown): BoardOp | undefined {
@@ -56,7 +62,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
     const ids = 'id' in op ? [op.id] : [];
     if ('placement' in op) {
       if (op.placement.kind === 'inside') ids.push(op.placement.frame);
-      if (op.placement.kind === 'near') ids.push(op.placement.target);
+      if (op.placement.kind === 'near' || op.placement.kind === 'at') ids.push(op.placement.target);
     }
     if (op.op === 'add_edge') ids.push(op.from, op.to);
     if (op.op === 'delete') ids.push(...op.ids);
@@ -116,8 +122,8 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
       system: input.mode === 'suggest' ? suggestPrompt : systemPrompt + (input.mode === 'live'
         ? '\nLIVE: Draw ONLY what the NEW phrase adds, typically 1-4 lines, zero if nothing new. Earlier phrases are context only. Do not anticipate features. Prefer one meaningful diagram for a loop/flow/plan, otherwise one shape per new concept, short labels, and no edges unless the phrase describes a relationship. Keep output minimal, except mockups need 4-8 components. Enrich an existing screen when this phrase describes it, reusing its id. No suggestions in live mode; a separate pause pass handles them.'
         : input.mode === 'refine' ? '\nREFINE: Restructure the live sketch into useful diagrams. Replace loose redundant shapes with del and diagram, reusing node ids so edges survive. Correct misheard labels using the full speaking stretch. Fill obvious missing pieces. Set title if untitled. At most one concept image for a creative/visual game, brand, or product look, only if no image exists. Preserve unrelated board content. No suggestions (a parallel request handles chips). Keep to one main diagram, at most 8 nodes, and at most 10 lines.' : '\nTURN: Draw a fuller useful set if needed. End with short concrete next-step suggestions.'),
-      messages: [...input.history.map(turn => ({ role: turn.role, content: turn.text })), { role: 'user', content: `Board: ${JSON.stringify(input.board)}\nNEW phrase: ${input.utterance}` }],
-      abortSignal: signal, maxRetries: 0, maxOutputTokens: input.mode === 'suggest' ? 60 : input.mode === 'live' ? 550 : input.mode === 'refine' ? 1200 : 1600,
+      messages: [...input.history.map(turn => ({ role: turn.role, content: turn.text })), { role: 'user', content: `${boardContext(input.board, input.utterance)}\nNEW phrase: ${input.utterance}` }],
+      abortSignal: signal, maxRetries: 0, maxOutputTokens: input.mode === 'suggest' ? 60 : input.mode === 'live' ? 420 : input.mode === 'refine' ? 1200 : 1600,
       providerOptions: { openai: { reasoningEffort: input.mode === 'refine' ? config().DEV_LLM_REFINE_REASONING_EFFORT : 'none' } },
       onError: ({ error }) => log('llm_stream_failed', { kind: error instanceof Error ? error.name : 'unknown' }),
     });

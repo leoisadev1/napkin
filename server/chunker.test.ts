@@ -12,11 +12,11 @@ test('punctuation at segment end commits once; turn end retains incomplete remai
     chunker.addText('and reminders.'); chunker.endTurn(); expect(phrases.at(-1)).toBe('with streaks and reminders.');
   }
 });
-test('five words commit after 350ms with no new word; further text resets timer', async () => {
+test('four words commit after 250ms with no new word; further text resets timer', async () => {
   const phrases: string[] = []; const chunker = new PhraseChunker({ onPhrase: text => phrases.push(text), onPartial() {} });
-  chunker.addText('one two three four'); await Bun.sleep(380); expect(phrases).toHaveLength(0);
-  chunker.addText('five'); await Bun.sleep(200); chunker.addText('six'); await Bun.sleep(200); expect(phrases).toHaveLength(0);
-  await Bun.sleep(180); expect(phrases).toEqual(['one two three four five six']); chunker.reset();
+  chunker.addText('one two three'); await Bun.sleep(280); expect(phrases).toHaveLength(0);
+  chunker.addText('four'); await Bun.sleep(200); chunker.addText('five'); await Bun.sleep(200); expect(phrases).toHaveLength(0);
+  await Bun.sleep(80); expect(phrases).toEqual(['one two three four five']); chunker.reset();
 });
 test('semantic pause retains fragments and reset cancels pending text/timer', async () => {
   const phrases: string[] = []; const chunker = new PhraseChunker({ onPhrase: text => phrases.push(text), onPartial() {} });

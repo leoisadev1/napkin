@@ -5,7 +5,7 @@ let connections = 0; let stopped = 0; let micStopped = 0; let closed = 0;
 mock.module('../../src/voice/microphone', () => ({ captureMicrophone: async () => () => { micStopped++; } }));
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class {
   constructor(callbacks: { onError: (error: Error) => void }) { failVoice = callbacks.onError; }
-  async connect() { connections++; if (process.argv[2] === 'connect' && connections === 1) throw new Error('STT connect failed'); }
+  setMuted() {} async connect() { connections++; if (process.argv[2] === 'connect' && connections === 1) throw new Error('STT connect failed'); }
   stop() { stopped++; } resetPhrases() {} send() {}
 } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class {
@@ -21,7 +21,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
   throw new Error('Unexpected fixture fetch');
 }, { preconnect: originalFetch.preconnect });
 const { ConversationEngine } = await import('../../src/conversation/engine/conversation-engine');
-const bridge: BoardBridge = { getSummary: () => ({ title: '', items: [], selection: [] }), apply() {}, showPending() {}, clearPending() {} };
+const bridge: BoardBridge = { getSummary: () => ({ title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } }), apply() {}, showPending() {}, clearPending() {} };
 const engine = new ConversationEngine(bridge);
 await engine.startVoice();
 if (process.argv[2] !== 'connect') engine.sendText('Build a tracker');
