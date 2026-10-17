@@ -34,6 +34,16 @@ export interface Conversation {
   phase: ConversationPhase;
   /** True while the agent is drawing. Independent of phase: the user can keep talking while it sketches. */
   sketching: boolean;
+  /** True while the pause pass is restructuring the board, so later changes are explained. */
+  refining: boolean;
+  /**
+   * Phrases heard but not yet on the board, oldest first: "queued" waits behind the current request,
+   * "drawing" is in flight. Removed once their first op lands (or the request finishes).
+   */
+  pendingPhrases: { id: string; text: string; status: "queued" | "drawing" }[];
+  /** Mic muted: the voice session stays connected (instant unmute) but no audio is sent or transcribed. */
+  muted: boolean;
+  setMuted(muted: boolean): void;
   /** Current tappable next-step ideas from the agent (0-3). */
   suggestions: string[];
   /** Send a suggestion as a user turn and clear the chips. */
