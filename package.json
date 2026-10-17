@@ -1,0 +1,38 @@
+{
+  "name": "real-time-whiteboard",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run dev:api & vite",
+    "dev:api": "bun --watch server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc -b && vite build",
+    "start": "NODE_ENV=production bun server/index.ts",
+    "typecheck": "tsc -b",
+    "test": "bun test",
+    "lint": "oxlint"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.96",
+    "@excalidraw/excalidraw": "^0.18.1",
+    "@opencoredev/loginwithchatgpt-ai": "^0.2.0",
+    "@opencoredev/loginwithchatgpt-core": "^0.2.0",
+    "@opencoredev/loginwithchatgpt-react": "^0.2.0",
+    "@opencoredev/loginwithchatgpt-server": "^0.2.0",
+    "ai": "^7.0.143",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
