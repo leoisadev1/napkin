@@ -27,3 +27,6 @@ dist-ssr
 .env.*
 !.env.example
 .data/
+
+# Local UI screenshots
+.screens/
