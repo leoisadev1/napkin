@@ -10,6 +10,7 @@ export class SpeechToText {
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnects = 0;
+  private connectedAt = 0;
   private callbacks;
   constructor(callbacks: { onPartial: (text: string) => void; onTurn: (text: string) => void; onBargeIn: () => void; onError: (error: Error) => void }) { this.callbacks = callbacks; }
   async connect() {
@@ -43,9 +44,14 @@ export class SpeechToText {
         }
       },
     });
+    this.connectedAt = Date.now();
   }
   send(frame: Uint8Array) {
-    if (this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 24000 * 2) this.socket.send(JSON.stringify({ type: 'audio', audio: toBase64(frame) }));
+    if (this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 24000 * 2) {
+      this.socket.send(JSON.stringify({ type: 'audio', audio: toBase64(frame) }));
+      // Only replenish the budget after a ready connection carries stable audio.
+      if (Date.now() - this.connectedAt >= 30_000) this.reconnects = 0;
+    }
   }
   stop() {
     clearTimeout(this.reconnectTimer); clearTimeout(this.flushTimer);

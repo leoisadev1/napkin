@@ -36,6 +36,7 @@ export class ConversationEngine {
     } catch { if (!signal.aborted) this.update({ phase: { kind: 'error', message: 'Could not connect to the server' } }); }
   }
   startVoice = async () => {
+    if (this.state.phase.kind === 'error') this.stopVoice();
     if (this.context) return;
     const generation = ++this.voiceGeneration;
     this.update({ phase: { kind: 'connecting' } });
