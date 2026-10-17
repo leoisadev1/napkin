@@ -15,10 +15,11 @@ export class SpeechToText {
   private connectedAt = 0;
   private callbacks;
   private chunker: PhraseChunker;
-  constructor(callbacks: { onPartial: (text: string) => void; onTurn: (text: string) => void; onBargeIn?: () => void; onPhrase?: (text: string) => void; onError: (error: Error) => void }) { this.callbacks = callbacks; this.chunker = new PhraseChunker({ onPartial: callbacks.onPartial, onPhrase: text => callbacks.onPhrase?.(text) }); }
+  constructor(callbacks: { getKeywords?: () => string[]; onPartial: (text: string) => void; onTurn: (text: string) => void; onBargeIn?: () => void; onPhrase?: (text: string) => void; onError: (error: Error) => void }) { this.callbacks = callbacks; this.chunker = new PhraseChunker({ onPartial: callbacks.onPartial, onPhrase: text => callbacks.onPhrase?.(text) }); }
   async connect() {
+    const keywords = this.callbacks.getKeywords?.().slice(0, 100) ?? [];
     this.socket = await openVoiceSocket({ endpoint: 'asr', signal: this.abort.signal,
-      setup: { model_name: 'default', input_format: 'pcm', json_config: { language: 'en', delay_in_frames: 8 } },
+      setup: { model_name: 'default', input_format: 'pcm', json_config: { language: 'en', delay_in_frames: 16, ...(keywords.length ? { keywords: { words: keywords, boost: 3 } } : {}) } },
       onMessage: message => {
         if (message.type === 'text' && !this.discarding) { this.detector.addText(message.text); this.chunker.addText(message.text); }
         if (message.type === 'end_text' && !this.discarding) this.chunker.endSegment();

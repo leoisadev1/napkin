@@ -1,0 +1,48 @@
+import { expect } from 'bun:test';
+import { ConversationEngine } from '../../src/conversation/engine/conversation-engine';
+import { AgentRequest } from '../../shared/agent-protocol';
+import { BoardState } from '../board-state';
+const requests: { input: AgentRequest; signal: AbortSignal | null | undefined; stream: ReadableStreamDefaultController<Uint8Array> }[] = [];
+const original = globalThis.fetch;
+globalThis.fetch = Object.assign(async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => new Response(new ReadableStream<Uint8Array>({ start(stream) { requests.push({ input: AgentRequest.parse(JSON.parse(String(init?.body))), signal: init?.signal, stream }); } })), { preconnect: original.preconnect });
+const board = new BoardState(); let applies = 0;
+const engine = new ConversationEngine({ getSummary: board.summary, apply: op => { applies++; board.apply(op); }, showPending() {}, clearPending() {} });
+const emit = (i: number, event: object) => requests[i]?.stream.enqueue(new TextEncoder().encode(`${JSON.stringify(event)}\n`));
+const done = async (i: number) => { emit(i, { type: 'done' }); requests[i]?.stream.close(); await Bun.sleep(10); };
+const sketch = (i: number) => emit(i, { type: 'op', op: { op: 'add_shape', id: 'game', label: 'Cat Simulator', shape: 'box', color: 'blue', placement: { kind: 'auto' } } });
+const title = (value: string) => ({ type: 'op', op: { op: 'set_title', title: value } });
+engine.receivePhrase('Cast Simulator is a Roblox game');
+engine.receivePhrase('where a cat earns coins and XP');
+expect(requests[0]?.input.history.at(-1)?.text).toContain('Cast Simulator');
+sketch(0); emit(0, title('Cast Simulator')); await done(0);
+expect(requests[1]?.input.history.at(-1)?.text).toContain('Cast Simulator is a Roblox game where a cat earns coins and XP');
+sketch(1); emit(1, title('Cat Simulator')); engine.finishSpokenStretch(); await done(1);
+expect(requests[2]?.input.mode).toBe('refine'); expect(requests[3]?.input.mode).toBe('suggest');
+const before = applies;
+emit(2, title('Buffered')); await Bun.sleep(10); expect(applies).toBe(before);
+emit(3, { type: 'suggestions', items: ['Add prestige'] }); await done(3);
+expect(engine.getSnapshot().suggestions).toEqual(['Add prestige']);
+engine.receivePartial('new speech'); expect(requests[2]?.signal?.aborted).toBe(true); await Bun.sleep(10);
+expect(board.summary().title).toBe('Cat Simulator');
+engine.receivePhrase('Add a prestige loop for rare cats'); sketch(4); emit(4, title('Cat Simulator')); engine.finishSpokenStretch(); await done(4);
+expect(requests[5]?.input.mode).toBe('refine'); expect(requests[6]?.input.mode).toBe('suggest');
+emit(5, title('Refined')); emit(5, { type: 'op', op: { op: 'add_shape', id: 'xp', label: 'Earn XP', shape: 'ellipse', color: 'blue', placement: { kind: 'auto' } } });
+await Bun.sleep(10); expect(board.summary().title).toBe('Cat Simulator');
+await done(5); expect(board.summary().title).toBe('Refined'); expect(board.summary().items.some(item => item.id === 'xp')).toBe(true);
+await done(6); engine.finishSpokenStretch(); await Bun.sleep(10); expect(requests).toHaveLength(7);
+// No operations from new speech means there is nothing new to refine.
+engine.receivePhrase('Tell me about the game'); engine.finishSpokenStretch(); await done(7);
+expect(requests[8]?.input.mode).toBe('suggest'); await done(8); engine.interrupt(); globalThis.fetch = original;
+// Cached diagram details must not resurrect corrected labels on the next phrase.
+globalThis.fetch = Object.assign(async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => new Response(new ReadableStream<Uint8Array>({ start(stream) { requests.push({ input: AgentRequest.parse(JSON.parse(String(init?.body))), signal: init?.signal, stream }); } })), { preconnect: original.preconnect });
+const correction = new ConversationEngine({ getSummary: board.summary, apply: board.apply, showPending() {}, clearPending() {} });
+const base = requests.length;
+correction.receivePhrase('Draw a progression loop for Cat Simulator');
+emit(base, { type: 'op', op: { op: 'add_diagram', id: 'loop', kind: 'cycle', title: 'Cast Simulator', placement: { kind: 'auto' }, nodes: [
+  { id: 'cat', label: 'Cast Simulator', color: 'blue', shape: 'box', parent: null }, { id: 'xp', label: 'XP', color: 'green', shape: 'ellipse', parent: null },
+], links: [], axes: [] } });
+emit(base, { type: 'op', op: { op: 'update', id: 'loop', label: 'Cat Simulator' } });
+emit(base, { type: 'op', op: { op: 'update', id: 'cat', label: 'Cat Simulator' } });
+await done(base); correction.receivePhrase('Add prestige to the same loop');
+const context = requests[base + 1]?.input.history.find(turn => turn.text.startsWith('Current diagram:'))?.text;
+expect(context).toContain('Cat Simulator'); expect(context).not.toContain('Cast Simulator'); correction.interrupt(); globalThis.fetch = original;

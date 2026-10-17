@@ -6,9 +6,9 @@ import { config } from './config';
 import { imageClient } from './chatgpt-images';
 
 export function chooseModel(models: string[]) {
-  return ['spark', 'nano', 'mini', 'luna'].map(name => models.find(model => model.toLowerCase().includes(name))).find(Boolean) ?? models[0];
+  return models.find(model => model === 'gpt-6.1-sol') ?? ['spark', 'nano', 'mini', 'luna'].map(name => models.find(model => model.toLowerCase().includes(name))).find(Boolean) ?? models[0];
 }
-export async function selectProvider(request: Request) {
+export async function selectProvider(request: Request, effort?: 'none' | 'low' | 'medium') {
   const session = await auth.getSession(request);
   if (session.status === 'authenticated') {
     const models = await auth.getModels(request) ?? [];
@@ -16,7 +16,7 @@ export async function selectProvider(request: Request) {
     if (!selected) throw new Error('No models available for this ChatGPT account');
     const proxyFetch = auth.proxyFetch(request);
     const provider = Object.assign(createChatGPTProxyProvider({ fetch: proxyFetch, headers: {
-      'x-login-with-chatgpt-reasoning-effort': 'low', 'x-login-with-chatgpt-service-tier': 'default',
+      'x-login-with-chatgpt-reasoning-effort': effort ?? 'low', 'x-login-with-chatgpt-service-tier': 'default',
     } }), { images: imageClient(proxyFetch) });
     return { model: provider(selected), modelId: selected, image: async (prompt: string, signal: AbortSignal) => {
       const result = await provider.images.generate({ prompt, model: models.find(m => !/mini|spark|luna|nano/i.test(m)) ?? selected, quality: 'low', size: '1024x1024', format: 'png', signal });
@@ -33,7 +33,7 @@ export async function selectProvider(request: Request) {
     fetch: Object.assign(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       if (typeof init?.body !== 'string') return fetch(url, init);
       const body = z.record(z.string(), z.unknown()).parse(JSON.parse(init.body));
-      return fetch(url, { ...init, body: JSON.stringify({ ...body, reasoning_effort: env.DEV_LLM_REASONING_EFFORT }) });
+      return fetch(url, { ...init, body: JSON.stringify({ ...body, reasoning_effort: effort ?? env.DEV_LLM_REASONING_EFFORT }) });
     }, { preconnect: fetch.preconnect }),
   });
   return { model: provider.chat(env.DEV_LLM_MODEL), modelId: env.DEV_LLM_MODEL, image: async (prompt: string, signal: AbortSignal) => {

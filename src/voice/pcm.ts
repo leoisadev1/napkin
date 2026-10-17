@@ -21,23 +21,39 @@ export function fromBase64(value: string) { return Uint8Array.from(atob(value), 
 export function rms(samples: Float32Array) {
   return Math.min(1, Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / Math.max(1, samples.length)) * 4);
 }
-// Integrate across source samples, retaining fractional phase across worklet blocks.
-// Averaging also suppresses high-frequency aliasing when downsampling.
+// Streaming 65-tap Blackman-windowed low-pass before fractional downsampling.
+// Keep filter history across worklet blocks; native 24 kHz capture bypasses it.
 export class PCMResampler {
   private sum = 0;
   private weight = 0;
   private frame: number[] = [];
+  private history = new Float32Array(65);
+  private cursor = 0;
+  private readonly taps: number[];
   private readonly inputRate: number;
   private readonly outputRate: number;
   private readonly frameSize: number;
   constructor(inputRate: number, outputRate = 24000, frameSize = 1920) {
     this.inputRate = inputRate; this.outputRate = outputRate; this.frameSize = frameSize;
     if (inputRate < outputRate || outputRate <= 0) throw new Error('Unsupported sample rate');
+    const cutoff = 0.45 * outputRate / inputRate;
+    const taps = Array.from({ length: 65 }, (_, i) => {
+      const x = i - 32;
+      const sinc = x === 0 ? 2 * cutoff : Math.sin(2 * Math.PI * cutoff * x) / (Math.PI * x);
+      return sinc * (0.42 - 0.5 * Math.cos(2 * Math.PI * i / 64) + 0.08 * Math.cos(4 * Math.PI * i / 64));
+    });
+    const total = taps.reduce((a, b) => a + b, 0); this.taps = taps.map(tap => tap / total);
   }
   push(samples: Float32Array): Uint8Array<ArrayBuffer>[] {
     const frames: Uint8Array<ArrayBuffer>[] = [];
     const ratio = this.inputRate / this.outputRate;
-    for (const sample of samples) {
+    for (const raw of samples) {
+      let sample = raw;
+      if (ratio > 1) {
+        this.history[this.cursor] = raw; sample = 0;
+        for (let i = 0; i < this.taps.length; i++) sample += (this.taps[i] ?? 0) * (this.history[(this.cursor - i + 65) % 65] ?? 0);
+        this.cursor = (this.cursor + 1) % 65;
+      }
       let remaining = 1;
       while (remaining > 1e-9) {
         const used = Math.min(remaining, ratio - this.weight);

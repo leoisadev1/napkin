@@ -86,3 +86,24 @@ for (const scenario of ['delete-frame', 'failed-clear']) {
     } finally { if (previous === undefined) delete process.env.DEV_LLM_BASE_URL; else process.env.DEV_LLM_BASE_URL = previous; proxy.stop(true); }
   }, 10000);
 }
+
+test('existing images prevent automatic repeats while explicit voice requests allow one new image', async () => {
+  const previous = process.env.DEV_LLM_BASE_URL; let images = 0;
+  const proxy = Bun.serve({ port: 0, fetch(request) {
+    if (new URL(request.url).pathname.endsWith('/images/generations')) { images++; return Response.json({ data: [{ b64_json: 'test' }] }); }
+    const chunk = { id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: { role: 'assistant', content: 'image art "Cat" "Cat"\nimage art-two "Cat" "Cat"\n' }, finish_reason: null }] };
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+  } });
+  process.env.DEV_LLM_BASE_URL = `http://127.0.0.1:${proxy.port}/v1`;
+  try {
+    for (const mode of ['live', 'turn', 'refine']) {
+      const before = images;
+      const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode, utterance: 'Improve Cat Simulator progression', history: [], board: { title: 'Cat Simulator', items: [{ id: 'concept', kind: 'image', label: 'Concept', frame: null, link: '' }], selection: [] } }) }));
+      if (!response.body) throw new Error('No response body'); for await (const _event of parseAgentStream(response.body)) { /* drain */ }
+      expect(images).toBe(before);
+    }
+    const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'live', utterance: 'Please add another image of a cat', history: [], board: { title: 'Cat Simulator', items: [{ id: 'concept', kind: 'image', label: 'Concept', frame: null, link: '' }], selection: [] } }) }));
+    if (!response.body) throw new Error('No response body'); for await (const _event of parseAgentStream(response.body)) { /* drain */ }
+    expect(images).toBe(1);
+  } finally { if (previous === undefined) delete process.env.DEV_LLM_BASE_URL; else process.env.DEV_LLM_BASE_URL = previous; proxy.stop(true); }
+});

@@ -6,7 +6,7 @@ const Image = z.object({ kind: z.literal('image'), id: NodeId, prompt: z.string(
 export type DrawingLine = { kind: 'op'; op: BoardOp } | (z.infer<typeof Image> & { frame?: Extract<BoardOp, { op: 'add_frame' }> }) | { kind: 'suggestions'; items: string[] };
 
 // Preserve quoted strings and pipe separators so labels can contain literal pipes/colons.
-type Token = { kind: 'word' | 'string' | 'pipe'; value: string };
+type Token = { kind: 'word' | 'string' | 'pipe'; value: string; start: number; end: number };
 function tokens(line: string): Token[] {
   const result: Token[] = [];
   const pattern = /"(?:\\.|[^"\\])*"|\||[^\s"|]+/gy;
@@ -17,7 +17,8 @@ function tokens(line: string): Token[] {
     const match = pattern.exec(line);
     if (!match) throw new Error('Invalid quoted token');
     const token = match[0];
-    result.push(token.startsWith('"') ? { kind: 'string', value: z.string().parse(JSON.parse(token)) } : { kind: token === '|' ? 'pipe' : 'word', value: token });
+    const position = { start: offset, end: pattern.lastIndex };
+    result.push(token.startsWith('"') ? { kind: 'string', value: z.string().parse(JSON.parse(token)), ...position } : { kind: token === '|' ? 'pipe' : 'word', value: token, ...position });
     offset = pattern.lastIndex;
   }
   return result;
@@ -69,6 +70,33 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
         if (!/^[^>]+->[^>]+$/.test(link)) throw new Error('Invalid edge');
         const [from, to] = link.split('->');
         value = { op: 'add_edge', id: word(parts[0]), from, to, label: parts[2] ? quoted(parts[2]) : '' }; break;
+      }
+      case 'diagram': {
+        const [head = [], ...sections] = groups(parts); count(head, 3, 4);
+        const nodes: unknown[] = []; const links: unknown[] = []; const axes: string[] = [];
+        let section: 'nodes' | 'links' | 'axes' = 'nodes';
+        for (const group of sections) {
+          let text = line.trim().slice(group[0]?.start ?? 0, group.at(-1)?.end ?? 0);
+          if (text.startsWith('links:')) { section = 'links'; text = text.slice(6).trim(); }
+          else if (text.startsWith('axes:')) { section = 'axes'; text = text.slice(5).trim(); }
+          if (section === 'axes') { if (text) axes.push(text.replace(/^"|"$/g, '')); continue; }
+          if (section === 'links') {
+            for (const link of (text.match(/(?:"(?:\\.|[^"\\])*"|[^;"])+/g) ?? []).filter(value => value.trim())) {
+              const match = /^\s*([a-z0-9-]+)->([a-z0-9-]+)(?:\s+("(?:\\.|[^"\\])*"))?\s*$/.exec(link);
+              if (!match) throw new Error('Invalid diagram link');
+              links.push({ from: match[1], to: match[2], label: match[3] ? z.string().parse(JSON.parse(match[3])) : '' });
+            }
+            continue;
+          }
+          const parentMatch = /[>^]([a-z0-9-]+)$/.exec(text);
+          if (parentMatch) text = text.slice(0, parentMatch.index).trim();
+          const match = /^([a-z0-9-]+):(.+):(gray|blue|green|yellow|orange|red|purple|pink|teal)(?::(box|ellipse|diamond|sticky))?$/.exec(text);
+          if (!match) throw new Error('Invalid diagram node');
+          const label = (match[2] ?? '').trim();
+          nodes.push({ id: match[1], label: label.startsWith('"') ? z.string().parse(JSON.parse(label)) : label, color: match[3], shape: match[4] ?? 'box', parent: parentMatch?.[1] ?? null });
+        }
+        value = { op: 'add_diagram', id: word(head[0]), kind: word(head[1]), title: quoted(head.at(-1)), placement: placement(head.slice(2, -1)), nodes, links, axes };
+        break;
       }
       case 'phone': case 'desktop': {
         const [head = [], ...components] = groups(parts); count(head, 2, 3);

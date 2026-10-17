@@ -10,6 +10,10 @@ export class BoardState {
       case 'add_frame': this.items.set(op.id, { id: op.id, kind: 'frame', label: op.title, frame, link: '' }); break;
       case 'add_shape': this.items.set(op.id, { id: op.id, kind: 'shape', label: op.label, frame, link: '' }); break;
       case 'add_mockup': this.items.set(op.id, { id: op.id, kind: 'mockup', label: op.title, frame, link: '' }); break;
+      case 'add_diagram':
+        this.items.set(op.id, { id: op.id, kind: 'diagram', label: op.title, frame, link: '' });
+        for (const node of op.nodes) this.items.set(node.id, { id: node.id, kind: 'shape', label: node.label, frame: op.id, link: '' });
+        break;
       case 'add_image': this.items.set(op.id, { id: op.id, kind: 'image', label: op.caption, frame, link: '' }); break;
       case 'add_edge': this.items.set(op.id, { id: op.id, kind: 'edge', label: op.label, frame: null, link: `${op.from} -> ${op.to}` }); break;
       case 'update': { const item = this.items.get(op.id); if (item && op.label !== undefined) item.label = op.label; break; }

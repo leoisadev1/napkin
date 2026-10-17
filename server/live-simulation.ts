@@ -9,7 +9,7 @@ import { AgentRequest } from '../shared/agent-protocol';
 import { BoardState } from './board-state';
 import { handleRequest } from './index';
 
-const description = "So it's a habit tracker, with streaks, and daily reminders at a time you pick. Maybe I can check in each morning, and see how I'm doing, plus a small social feed for friends.";
+const description = "Cat Simulator, a Roblox game. Brainstorm a progression system with XP and prestige. Earn coins, upgrade your cat, unlock new areas, and repeat with harder tasks.";
 const evidence = process.env.RTW_EVIDENCE_DIR ?? '/tmp/rtw-live-evidence'; await mkdir(evidence, { recursive: true });
 let wav = process.env.RTW_SIMULATION_WAV;
 if (!wav) {
@@ -25,13 +25,17 @@ const wavBytes = new Uint8Array(await Bun.file(wav).arrayBuffer());
 const pcm = wavBytes.subarray(44);
 const frames = new PCMResampler(48000).push(decodePCM(wavBytes.subarray(44)));
 type Measurement = { phrase: string; firstWordAt: number; lastWordAt: number; committedAt: number; requestAt?: number; firstOpAt?: number };
+let activeRefines = 0;
+const refineMeasurements: { ms: number; completed: boolean; image: boolean }[] = [];
 const suggestionRequests: { at: number; utterance: string }[] = [];
 const suggestionArrivals: { at: number; items: string[] }[] = [];
 const measurements: Measurement[] = []; let awaiting: Measurement[] = []; let drawing: Measurement[] = [];
 const board = new BoardState();
+const diagramKinds: string[] = [];
 let audioStartedAt: number | undefined; let opsWhileAudioPlaying = 0;
 const engine = new ConversationEngine({ getSummary: board.summary, apply: op => {
   const now = performance.now();
+  if (op.op === 'add_diagram') diagramKinds.push(op.kind);
   if (audioStartedAt !== undefined && now < audioStartedAt + pcm.length / 96) opsWhileAudioPlaying++;
   for (const row of drawing) row.firstOpAt ??= now; board.apply(op);
 }, showPending() {}, clearPending() {} });
@@ -46,14 +50,18 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
     if (input === '/api/agent') {
       const request = AgentRequest.parse(JSON.parse(String(init?.body)));
       if (request.mode === 'suggest') suggestionRequests.push({ at: performance.now(), utterance: request.utterance });
-      else {
+      else if (request.mode !== 'refine') {
         drawing = []; let length = 0;
         while (awaiting[0] && length < request.utterance.length) {
           const row = awaiting.shift(); if (row) { row.requestAt = performance.now(); drawing.push(row); length += row.phrase.length + (length ? 1 : 0); }
         }
       }
     }
-    return handleRequest(new Request(`http://simulation${input}`, init));
+    const isRefine = input === '/api/agent' && AgentRequest.parse(JSON.parse(String(init?.body))).mode === 'refine';
+    const at = performance.now(); if (isRefine) activeRefines++;
+    const response = await handleRequest(new Request(`http://simulation${input}`, init));
+    if (isRefine) void response.clone().text().then(text => { refineMeasurements.push({ ms: Math.round(performance.now() - at), completed: text.includes('\"type\":\"done\"'), image: text.includes('add_image') }); }).catch(() => { refineMeasurements.push({ ms: Math.round(performance.now() - at), completed: false, image: false }); }).finally(() => { activeRefines--; });
+    return response;
   }
   return originalFetch(input, init);
 }, { preconnect: originalFetch.preconnect });
@@ -70,13 +78,15 @@ try {
   audioStartedAt = performance.now();
   for (const frame of [...frames, ...Array.from({ length: 32 }, () => new Uint8Array(3840))]) { stt.send(frame); await Bun.sleep(80); }
   const limit = performance.now() + 45_000;
-  while ((!ended || engine.getSnapshot().sketching || awaiting.length || !suggestionArrivals.length) && performance.now() < limit) await Bun.sleep(50);
+  while ((!ended || engine.getSnapshot().sketching || awaiting.length || !suggestionArrivals.length || activeRefines) && performance.now() < limit) await Bun.sleep(50);
   if (engine.getSnapshot().sketching || awaiting.length) throw new Error('Simulation did not drain');
   const rows = measurements.map(row => ({ phrase: row.phrase, commitMs: Math.round(row.committedAt - row.lastWordAt), queueMs: row.requestAt === undefined ? null : Math.round(row.requestAt - row.committedAt), lastWordToOpMs: row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.lastWordAt), firstWordToOpMs: row.firstOpAt === undefined ? null : Math.round(row.firstOpAt - row.firstWordAt), requestToOpMs: row.firstOpAt === undefined || row.requestAt === undefined ? null : Math.round(row.firstOpAt - row.requestAt) }));
-  const result = { wav, opsWhileAudioPlaying, audioSeconds: pcm.length / 96000,
+  const result = { wav, diagramKinds, refineMeasurements, opsWhileAudioPlaying, audioSeconds: pcm.length / 96000,
     suggestionRequests: suggestionRequests.map(row => ({ ...row, at: Math.round(row.at - (audioStartedAt ?? 0)) })),
     suggestionArrivals: suggestionArrivals.map(row => ({ ...row, at: Math.round(row.at - (audioStartedAt ?? 0)) })), model: process.env.DEV_LLM_MODEL, rows, board: board.summary() };
   await Bun.write(join(evidence, 'simulation.json'), JSON.stringify(result, null, 2)); process.stdout.write(`${JSON.stringify(result)}\n`);
   if (!suggestionArrivals.some(row => row.items.length >= 2)) throw new Error('No pause suggestions arrived');
-  if (!opsWhileAudioPlaying || measurements.length < 2 || measurements.some(row => row.firstOpAt === undefined)) throw new Error('Some phrases produced no operations');
+  if (!opsWhileAudioPlaying || measurements.length < 2) throw new Error('No live drawing');
+  if (!board.summary().items.some(item => item.kind === 'diagram')) throw new Error('No diagram');
+  if (board.summary().items.some(item => /^(cat|cast simulator)$/i.test(item.label))) throw new Error('Uncorrected fragment');
 } finally { stt.stop(); engine.interrupt(); globalThis.fetch = originalFetch; }

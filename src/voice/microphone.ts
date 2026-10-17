@@ -13,10 +13,11 @@ export async function captureMicrophone(args: { context: AudioContext; onFrame: 
   const { context, onFrame, onLevel } = args;
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   let node: AudioWorkletNode | undefined;
-  const source = context.createMediaStreamSource(stream);
+  let source: MediaStreamAudioSourceNode | undefined;
   const mute = context.createGain(); mute.gain.value = 0;
   const blob = URL.createObjectURL(new Blob([workletSource], { type: 'text/javascript' }));
   try {
+    source = context.createMediaStreamSource(stream);
     await context.audioWorklet.addModule(blob);
     node = new AudioWorkletNode(context, 'rtw-capture');
     const resampler = new PCMResampler(context.sampleRate);
@@ -27,7 +28,7 @@ export async function captureMicrophone(args: { context: AudioContext; onFrame: 
       if (performance.now() - lastLevel >= 32) { onLevel(rms(samples)); lastLevel = performance.now(); }
     };
     source.connect(node); node.connect(mute); mute.connect(context.destination);
-  } catch (error) { stream.getTracks().forEach(track => track.stop()); source.disconnect(); node?.disconnect(); throw error; }
+  } catch (error) { stream.getTracks().forEach(track => track.stop()); source?.disconnect(); node?.disconnect(); throw error; }
   finally { URL.revokeObjectURL(blob); }
-  return () => { stream.getTracks().forEach(track => track.stop()); if (node) { node.port.onmessage = null; node.disconnect(); } source.disconnect(); mute.disconnect(); onLevel(0); };
+  return () => { stream.getTracks().forEach(track => track.stop()); if (node) { node.port.onmessage = null; node.disconnect(); } source?.disconnect(); mute.disconnect(); onLevel(0); };
 }

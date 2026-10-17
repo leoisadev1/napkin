@@ -11,7 +11,7 @@ test('48k resampling preserves 80ms frame timing across arbitrary capture blocks
   const resampler = new PCMResampler(48000); const frames = [];
   for (let offset = 0; offset < 7680; offset += 128) frames.push(...resampler.push(new Float32Array(128).fill(0.5)));
   expect(frames.length).toBe(2); expect(frames[0]?.length).toBe(3840);
-  expect(decodePCM(frames[0] ?? new Uint8Array())[0]).toBeCloseTo(0.5, 4);
+  expect(decodePCM(frames[0] ?? new Uint8Array())[100]).toBeCloseTo(0.5, 4);
 });
 test('44.1k resampling retains phase across non-integral block boundaries', () => {
   const resampler = new PCMResampler(44100); const frames = [];
@@ -55,3 +55,19 @@ test('STT commits live segments exactly once and interrupt discards late words t
   const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   expect(error).toBe(''); expect(exit).toBe(0);
 }, 5000);
+
+test('fallback low-pass rejects a 16kHz alias while retaining speech-band energy', () => {
+  const amplitude = (frequency: number) => {
+    const input = Float32Array.from({ length: 48000 }, (_, i) => Math.sin(2 * Math.PI * frequency * i / 48000) * 0.7);
+    const bytes = new PCMResampler(48000).push(input);
+    const output = bytes.flatMap(frame => [...decodePCM(frame)]).slice(100);
+    return Math.sqrt(output.reduce((sum, sample) => sum + sample * sample, 0) / output.length);
+  };
+  expect(amplitude(16000)).toBeLessThan(0.005); expect(amplitude(2000)).toBeGreaterThan(0.45);
+});
+test('board keywords retain case, split names into tokens, deduplicate and cap', async () => {
+  const { boardKeywords } = await import('../src/voice/keywords');
+  const keywords = boardKeywords({ title: 'Cat Simulator', items: [{ id: 'cat', kind: 'shape', label: 'Cat Roblox XP prestige', frame: null, link: '' }], selection: [] });
+  expect(keywords).toEqual(['Cat', 'Simulator', 'Roblox', 'XP', 'prestige']);
+  expect(boardKeywords({ title: Array.from({ length: 200 }, (_, i) => `name${i}`).join(' '), items: [], selection: [] })).toHaveLength(100);
+});

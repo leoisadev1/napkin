@@ -3,13 +3,14 @@ import { z } from 'zod';
 import { chooseModel } from './llm';
 import { runAgent } from './agent';
 
-test('account model selection prefers fast variants ahead of a full model', () => {
+test('account model selection prefers GPT-6.1 Sol, then fast fallback variants', () => {
   expect(chooseModel(['gpt-6-sol', 'gpt-6-luna', 'gpt-spark'])).toBe('gpt-spark');
   expect(chooseModel(['gpt-6-sol', 'gpt-mini'])).toBe('gpt-mini');
   expect(chooseModel(['gpt-6-sol'])).toBe('gpt-6-sol');
   expect(chooseModel([])).toBeUndefined();
+  expect(chooseModel(['gpt-mini', 'gpt-6.1-sol'])).toBe('gpt-6.1-sol');
 });
-test('dev model aliases send the exact requested effort on the wire without parallel speech/tools', async () => {
+test('live mode pins none on the wire despite dev defaults without parallel speech/tools', async () => {
   const previous = { ...process.env }; const efforts: string[] = [];
   const proxy = Bun.serve({ port: 0, async fetch(request) {
     const body = z.object({ reasoning_effort: z.string(), tools: z.unknown().optional() }).parse(await request.json());
@@ -23,7 +24,7 @@ test('dev model aliases send the exact requested effort on the wire without para
       process.env.DEV_LLM_REASONING_EFFORT = effort;
       await runAgent({ request: new Request('http://test/api/agent'), input: { mode: 'live', utterance: 'An item', history: [], board: { title: '', items: [], selection: [] } }, signal: AbortSignal.timeout(5000), emit: event => { expect(event.type).not.toBe('say'); } });
     }
-    expect(efforts).toEqual(['none', 'minimal', 'low']);
+    expect(efforts).toEqual(['none', 'none', 'none']);
   } finally {
     proxy.stop(true); for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous);
   }

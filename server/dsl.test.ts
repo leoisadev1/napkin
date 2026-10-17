@@ -50,3 +50,20 @@ test('image child defers its frame until successful image generation', () => {
   expect(lines).toHaveLength(1); expect(lines[0]?.kind).toBe('image');
   if (lines[0]?.kind === 'image') expect(lines[0].frame?.id).toBe('gallery');
 });
+
+test('diagram DSL parses kinds, shapes, hierarchy, links and axes', () => {
+  for (const kind of ['flow', 'cycle', 'tree', 'mindmap', 'timeline', 'funnel', 'quadrant']) {
+    const result = parseDrawingLine(`diagram prog ${kind} in:game "Progression loop" | earn:Earn coins:green | upgrade:Upgrade cat:blue:ellipse^earn | links: earn->upgrade "Spend" | axes: Effort | Impact`);
+    expect(result?.kind).toBe('op');
+    if (result?.kind !== 'op' || result.op.op !== 'add_diagram') throw new Error('Expected diagram');
+    expect(String(result.op.kind)).toBe(kind); expect(result.op.nodes[1]?.parent).toBe('earn');
+    expect(result.op.nodes[1]?.shape).toBe('ellipse'); expect(result.op.links).toEqual([{ from: 'earn', to: 'upgrade', label: 'Spend' }]);
+    expect(result.op.axes).toEqual(['Effort', 'Impact']); expect(result.op.placement).toEqual({ kind: 'inside', frame: 'game' });
+  }
+  expect(parseDrawingLine('diagram bad cycle "Invalid" | only:One:blue')).toBeUndefined();
+});
+test('diagram quoted delimiters preserve node and link labels', () => {
+  const line = parseDrawingLine('diagram d flow "Flow" | a:"A | B":blue | b:Done:green | links: a->b "yes; continue"');
+  if (line?.kind !== 'op' || line.op.op !== 'add_diagram') throw new Error('Missing diagram');
+  expect(line.op.nodes[0]?.label).toBe('A | B'); expect(line.op.links[0]?.label).toBe('yes; continue');
+});

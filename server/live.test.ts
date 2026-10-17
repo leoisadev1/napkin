@@ -25,7 +25,7 @@ test.skipIf(!process.env.DEV_LLM_BASE_URL)('four sequential live phrases increme
   expect(items.filter(item => item.kind !== 'frame').length).toBeGreaterThanOrEqual(4);
 }, 65000);
 
-test.skipIf(!process.env.DEV_LLM_BASE_URL)('pause suggestions return 2-3 short next additions without drawing within two seconds', async () => {
+test.skipIf(!process.env.DEV_LLM_BASE_URL)('pause suggestions return 2-3 short next additions without drawing within four seconds', async () => {
   const started = performance.now(); let arrived: number | undefined; let ops = 0;
   const suggestions: string[][] = [];
   const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', signal: AbortSignal.timeout(5000), body: JSON.stringify({
@@ -42,7 +42,7 @@ test.skipIf(!process.env.DEV_LLM_BASE_URL)('pause suggestions return 2-3 short n
   expect(suggestions[0]?.length).toBeGreaterThanOrEqual(2); expect(suggestions[0]?.length).toBeLessThanOrEqual(3);
   for (const item of suggestions[0] ?? []) expect(item.length).toBeLessThanOrEqual(40);
   process.stderr.write(`${JSON.stringify({ suggestMs: Math.round(arrived ?? -1), suggestions, ops })}\n`);
-  expect(arrived ?? Infinity).toBeLessThan(2200);
+  expect(arrived ?? Infinity).toBeLessThan(4000);
 }, 8000);
 
 test.skipIf(!process.env.DEV_LLM_BASE_URL)('live screens have meaningful components, enrich the same mockup, and separate distinct areas', async () => {

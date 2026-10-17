@@ -34,7 +34,7 @@ expect(engine.getSnapshot().transcript.filter(t => t.role === 'user')).toHaveLen
 send(0, '{"type":"op","op":{"op":"set_title","title":"Habits"}}\n'); await finish(0);
 expect(requests).toHaveLength(2); expect(requests[1]?.input.utterance).toBe('with streaks, and reminders.');
 expect(requests[1]?.input.mode).toBe('live'); expect(requests[1]?.input.board.title).toBe('Habits');
-expect(requests[1]?.input.history).toEqual([{ role: 'user', text: 'a habit tracker,' }]);
+expect(requests[1]?.input.history.some(turn => turn.text.includes('a habit tracker, with streaks, and reminders.'))).toBe(true);
 speech?.onTurn(''); speech?.onPhrase?.('social feed.'); expect(engine.getSnapshot().transcript.filter(t => t.role === 'user')).toHaveLength(2);
 engine.interrupt(); expect(requests[1]?.signal?.aborted).toBe(true); await Bun.sleep(5);
 expect(requests).toHaveLength(2); expect(engine.getSnapshot().sketching).toBe(false); expect(engine.getSnapshot().partial).toBe('');
