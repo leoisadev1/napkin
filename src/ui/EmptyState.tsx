@@ -1,28 +1,38 @@
-// First-run invitation on the blank canvas: what this is, and three prompts that run on click.
-import type { ComponentType } from "react";
-import { CalendarSketchIcon, FlowSketchIcon, PhoneSketchIcon } from "./icons";
+// First-run invitation on the blank canvas: one line on what this is, the "Start talking" button, and three
+// example prompts that run as typed turns.
+import { ArrowRightIcon, MicIcon } from "./icons";
 
-type Prompt = { text: string; Icon: ComponentType<{ size?: number }> };
-
-const EXAMPLE_PROMPTS: readonly Prompt[] = [
-  { text: "I'm building a habit tracker app. Help me map the core loop and sketch the main screen.", Icon: PhoneSketchIcon },
-  { text: "Plan a launch for my podcast. I've got six weeks and no audience yet.", Icon: CalendarSketchIcon },
-  { text: "Map how our checkout service talks to payments and fraud checks.", Icon: FlowSketchIcon },
+const EXAMPLE_PROMPTS: readonly string[] = [
+  "A habit tracker app: the core loop and main screen",
+  "A six-week launch plan for a new podcast",
+  "How our checkout talks to payments and fraud checks",
 ];
 
-export function EmptyState({ visible, onPick }: { visible: boolean; onPick: (text: string) => void }) {
+type Props = {
+  visible: boolean;
+  voiceAvailable: boolean;
+  onStart: () => void;
+  onPick: (text: string) => void;
+};
+
+export function EmptyState({ visible, voiceAvailable, onStart, onPick }: Props) {
   return (
     <section className="empty" data-visible={visible} aria-hidden={!visible} inert={!visible}>
       <h1 className="empty-title">Think out loud.</h1>
-      <p className="empty-sub">Talk through an idea and your partner sketches it on the board as you go.</p>
+      <p className="empty-sub">Talk through an idea and the board fills in as you go.</p>
+      {voiceAvailable && (
+        <button type="button" className="start-talking" onClick={onStart}>
+          <MicIcon size={18} strokeWidth={2} />
+          Start talking
+        </button>
+      )}
+      <p className="prompts-label">{voiceAvailable ? "Or try one" : "Type below, or try one"}</p>
       <ul className="prompts">
-        {EXAMPLE_PROMPTS.map(({ text, Icon }, index) => (
-          <li key={text} style={{ transitionDelay: visible ? `${140 + index * 70}ms` : "0ms" }}>
+        {EXAMPLE_PROMPTS.map((text) => (
+          <li key={text}>
             <button type="button" className="prompt" onClick={() => onPick(text)}>
-              <span className="prompt-icon">
-                <Icon size={20} />
-              </span>
-              <span className="prompt-text">{text}</span>
+              <span>{text}</span>
+              <ArrowRightIcon size={16} strokeWidth={2} />
             </button>
           </li>
         ))}

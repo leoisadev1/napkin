@@ -75,7 +75,7 @@ export const CloseIcon = (p: IconProps) => (
   </Icon>
 );
 
-/** Brand mark: a hand-drawn loop with the partner's ember dot. */
+/** Brand mark: a hand-drawn loop with a dot in the accent color. */
 export const Mark = ({ size = 22 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
     <path
@@ -84,30 +84,20 @@ export const Mark = ({ size = 22 }: { size?: number }) => (
       strokeWidth="1.9"
       strokeLinecap="round"
     />
-    <circle cx="6.2" cy="18.4" r="2.3" fill="var(--ember)" />
+    <circle cx="6.2" cy="18.4" r="2.3" fill="var(--primary)" />
   </svg>
 );
 
-export const PhoneSketchIcon = (p: IconProps) => (
+export const PencilIcon = (p: IconProps) => (
   <Icon {...p}>
-    <rect x="7" y="2.8" width="10" height="18.4" rx="2.6" />
-    <path d="M10.5 5.6h3M9.5 10h5M9.5 13h3.5" />
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16Z" />
+    <path d="m13.5 6.5 4 4" />
   </Icon>
 );
 
-export const FlowSketchIcon = (p: IconProps) => (
+export const ArrowRightIcon = (p: IconProps) => (
   <Icon {...p}>
-    <rect x="2.8" y="9" width="6" height="6" rx="1.5" />
-    <rect x="15.2" y="3.5" width="6" height="6" rx="1.5" />
-    <rect x="15.2" y="14.5" width="6" height="6" rx="1.5" />
-    <path d="M8.8 12h2.4a2 2 0 0 0 2-2V8.5a2 2 0 0 1 2-2M11.2 12a2 2 0 0 1 2 2v1.5a2 2 0 0 0 2 2" />
-  </Icon>
-);
-
-export const CalendarSketchIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
-    <path d="M3.5 9.5h17M8 3v4M16 3v4" />
-    <path d="m9 14.5 2 2 4-4" />
+    <path d="M5 12h14" />
+    <path d="m13 6 6 6-6 6" />
   </Icon>
 );

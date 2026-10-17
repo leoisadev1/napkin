@@ -50,7 +50,7 @@ export default function App() {
     document.documentElement.dataset.theme = canvas.theme;
   }, [canvas.theme]);
 
-  // Esc cuts the partner off mid-sentence or mid-sketch.
+  // Esc cancels a turn the partner is still working on.
   const { phase, interrupt } = conversation;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -61,7 +61,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase.kind, interrupt]);
 
-  const showEmpty = !canvas.hasContent && conversation.transcript.length === 0 && conversation.partial.length === 0;
+  const resting = phase.kind === "idle" || phase.kind === "error";
+  const showEmpty = resting && !canvas.hasContent && conversation.transcript.length === 0 && conversation.partial.length === 0;
 
   return (
     <div className="app">
@@ -77,10 +78,15 @@ export default function App() {
           data-active={transcriptOpen}
           onClick={() => setTranscriptOpen((open) => !open)}
         >
-          <TranscriptIcon size={20} />
+          <TranscriptIcon size={18} />
         </button>
       </div>
-      <EmptyState visible={showEmpty} onPick={conversation.sendText} />
+      <EmptyState
+        visible={showEmpty}
+        voiceAvailable={conversation.voiceAvailable}
+        onStart={() => void conversation.startVoice()}
+        onPick={conversation.sendText}
+      />
       <VoiceDock conversation={conversation} />
       <TranscriptPanel open={transcriptOpen} entries={conversation.transcript} onClose={() => setTranscriptOpen(false)} />
     </div>
