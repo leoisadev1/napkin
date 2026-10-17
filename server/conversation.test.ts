@@ -4,3 +4,11 @@ test('microphone readiness preserves an active typed turn and assistant playback
   const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   expect(error).toBe(''); expect(exit).toBe(0);
 }, 5000);
+
+for (const failure of ['tts', 'connect', 'agent']) {
+  test(`Retry voice replaces the old session after ${failure} failure`, async () => {
+    const child = Bun.spawn(['bun', 'server/fixtures/conversation-retry.ts', failure], { stdout: 'pipe', stderr: 'pipe' });
+    const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    expect(error).toBe(''); expect(exit).toBe(0);
+  }, 5000);
+}
