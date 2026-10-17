@@ -9,23 +9,35 @@ import type { BoardBridge } from "../conversation/types";
 import type { Animator } from "./animator";
 import { createAnimator } from "./animator";
 import type { Built, IdFactory } from "./builders";
-import { arrowGeometry, buildArrow, buildFrame, buildImage, buildMockup, buildPending, buildShape } from "./builders";
+import { arrowGeometry, buildArrow, buildFrame, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
 import type { Outline, Point, Rect } from "./geometry";
-import { boundsOf, center, contains, edgePoint } from "./geometry";
+import { boundsOf } from "./bounds";
+import { bendAround, center, contains, edgePoint, inflate, overlaps, union } from "./geometry";
 import { mimeOf, readImageSize } from "./imageSize";
-import { fitFrame, placeAuto, placeInside, placeNear } from "./layout";
+import { dedupeNodeIds } from "./identity";
+import type { Block } from "./layout";
+import { besideSpot, fitFrame, isFree, nearestFree, overlappingPairs, placeAuto, placeInside, placeNear, settleBlocks } from "./layout";
 import type { NodeKind, NodeMeta } from "./meta";
 import { nodeIdOf, readMeta } from "./meta";
 import { SWATCHES } from "./palette";
 
 export const DEFAULT_TITLE = "Untitled board";
 
-/** Screen-space insets covered by the app's floating chrome, so "in view" means actually visible. */
-export const CHROME_INSETS = { top: 80, bottom: 250, left: 32, right: 32 };
+type Insets = { top: number; bottom: number; left: number; right: number };
 
-const ROW_WIDTH = 1500;
+/**
+ * Screen-space insets covered by the app's floating chrome, so "in view" means actually visible. The bottom covers
+ * the dock plus a two-line caption. Phones (the 730px breakpoint in ui.css) stack Excalidraw's toolbar and the title
+ * row on top and keep a lock column on the right.
+ */
+export function chromeInsets(viewportWidth: number): Insets {
+  return viewportWidth <= 730 ? { top: 116, bottom: 300, left: 16, right: 52 } : { top: 80, bottom: 272, left: 32, right: 32 };
+}
+
 const ROW_GAP = 96;
 const EDGE_GAP = 8;
+/** Frame names render above the frame's top edge; keep that strip clear too. */
+const FRAME_TITLE_ROOM = 32;
 /** Below this zoom hand-drawn labels stop being legible. */
 const MIN_READABLE_ZOOM = 0.45;
 
@@ -45,8 +57,6 @@ type NodeEntry = {
   elements: ExcalidrawElement[];
   meta: NodeMeta | null;
 };
-
-type Flow = { rowX: number; rowBottom: number };
 
 function isDataURL(value: string): value is DataURL {
   return value.startsWith("data:");
@@ -141,7 +151,6 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let title = DEFAULT_TITLE;
   let seq = 0;
   let lastPlaced: NodeId | null = null;
-  let flow: Flow | null = null;
   let followTimer: number | null = null;
   const pendingFollow = new Set<string>();
 
@@ -152,10 +161,12 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   // ---- Scene transaction ------------------------------------------------------------------------
 
-  type Tx = { elements: ExcalidrawElement[] };
+  /** `overlapsBefore` holds block pairs that already overlapped, so settling only fixes clashes this change made. */
+  type Tx = { elements: ExcalidrawElement[]; overlapsBefore: Set<string> };
 
   function begin(): Tx {
-    return { elements: [...api.getSceneElementsIncludingDeleted()] };
+    const elements = [...dedupeNodeIds(api.getSceneElementsIncludingDeleted())];
+    return { elements, overlapsBefore: overlappingPairs(blocksOf(elements).map((b) => b.block)) };
   }
 
   function replace(tx: Tx, next: ExcalidrawElement) {
@@ -206,6 +217,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   }
 
   function commit(tx: Tx, capture: "undoable" | "silent" = "undoable") {
+    settle(tx);
+    rerouteAgentEdges(tx);
+    liftHiddenLabels(tx);
     syncBindings(tx);
     api.updateScene({
       elements: tx.elements,
@@ -225,9 +239,25 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       if (el.isDeleted || exclude.has(el.id) || el.frameId !== null || el.type === "arrow") continue;
       if (containerIdOf(el) !== null) continue;
       const r = boundsOf([el]);
-      if (r !== null) rects.push(r);
+      if (r !== null) rects.push(el.type === "frame" || el.type === "magicframe" ? withTitle(r) : r);
     }
     return rects;
+  }
+
+  function withTitle(r: Rect): Rect {
+    return { x: r.x, y: r.y - FRAME_TITLE_ROOM, w: r.w, h: r.h + FRAME_TITLE_ROOM };
+  }
+
+  /** The frame's nodes in creation order, one rect per node. */
+  function frameItems(tx: Tx, frameElementId: string, exclude: ReadonlySet<string>): Rect[] {
+    const order = new Map(tx.elements.map((el, i) => [el.id, i]));
+    const items: { index: number; rect: Rect }[] = [];
+    for (const entry of indexNodes(tx.elements).values()) {
+      if (entry.kind === "edge" || entry.root.frameId !== frameElementId || exclude.has(entry.root.id)) continue;
+      const rect = nodeRect(entry);
+      if (rect !== null) items.push({ index: order.get(entry.root.id) ?? 0, rect });
+    }
+    return items.sort((a, b) => a.index - b.index).map((item) => item.rect);
   }
 
   function frameChildren(tx: Tx, frameElementId: string, exclude: ReadonlySet<string>): Rect[] {
@@ -243,15 +273,25 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   /** Where the first item on an empty board goes: upper left of the visible area, so the board grows into space. */
   function startPoint(size: { w: number; h: number }): Point {
     const state = api.getAppState();
+    const insets = chromeInsets(state.width);
     const [minX, minY, maxX, maxY] = getVisibleSceneBounds(state);
     const zoom = state.zoom.value;
-    const top = minY + CHROME_INSETS.top / zoom;
-    const bottom = maxY - CHROME_INSETS.bottom / zoom;
+    const top = minY + insets.top / zoom;
+    const bottom = maxY - insets.bottom / zoom;
     const width = maxX - minX;
     const cx = (minX + maxX) / 2 - Math.min(width * 0.22, 320 / zoom);
     const y = top + Math.max(0, (bottom - top) * 0.12);
     // placeAuto centers on this point, so convert the desired top-left into a center.
     return { x: Math.max(minX + 48 / zoom + size.w / 2, cx), y: y + size.h / 2 };
+  }
+
+  /** Zoom at which `rect` fills the area between the app's floating chrome. */
+  function fitZoom(rect: Rect): number {
+    const state = api.getAppState();
+    const insets = chromeInsets(state.width);
+    const w = state.width - insets.left - insets.right;
+    const h = state.height - insets.top - insets.bottom;
+    return Math.min(w / Math.max(rect.w, 1), h / Math.max(rect.h, 1));
   }
 
   type Resolved = { at: Point; frame: { element: ExcalidrawElement } | null };
@@ -265,8 +305,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         if (frame !== undefined && frame.kind === "frame") {
           const rect = boundsOf([frame.root]);
           if (rect !== null) {
-            const result = placeInside({ size, frame: rect, children: frameChildren(tx, frame.root.id, exclude) });
-            return { at: result.at, frame: { element: frame.root } };
+            const at = placeInside({ size, frame: rect, items: frameItems(tx, frame.root.id, exclude) });
+            return { at, frame: { element: frame.root } };
           }
         }
         return resolve(tx, { kind: "auto" }, size, exclude);
@@ -279,31 +319,35 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         const frameEl = target.root.frameId === null ? undefined : tx.elements.find((el) => el.id === target.root.frameId && !el.isDeleted);
         if (frameEl !== undefined) {
           const frameRect = boundsOf([frameEl]);
-          const at = placeNear({ size, target: rect, direction: placement.direction, obstacles: frameChildren(tx, frameEl.id, exclude) });
-          if (frameRect !== null) return { at, frame: { element: frameEl } };
+          if (frameRect !== null) {
+            // Right beside the target when that spot is open; otherwise the frame's next grid slot, which keeps the
+            // frame tidy instead of wandering off to whatever gap the nudging finds.
+            const items = frameItems(tx, frameEl.id, exclude);
+            const beside = besideSpot({ size, target: rect, direction: placement.direction });
+            const at = isFree({ size, at: beside, obstacles: items }) ? beside : placeInside({ size, frame: frameRect, items });
+            return { at, frame: { element: frameEl } };
+          }
         }
         return { at: placeNear({ size, target: rect, direction: placement.direction, obstacles: obstacles(tx, exclude) }), frame: null };
       }
       case "auto": {
         const anchorEntry = lastPlaced === null ? undefined : nodes.get(lastPlaced);
-        const anchorRect = anchorEntry === undefined ? null : nodeRect(anchorEntry);
+        // Something placed inside a frame anchors by its frame, so new blocks go beside the frame, not into it.
+        const anchorFrame =
+          anchorEntry === undefined || anchorEntry.root.frameId === null
+            ? undefined
+            : tx.elements.find((el) => el.id === anchorEntry.root.frameId && !el.isDeleted);
+        const anchorRect = anchorFrame !== undefined ? boundsOf([anchorFrame]) : anchorEntry === undefined ? null : nodeRect(anchorEntry);
         const blocked = obstacles(tx, exclude);
-        if (anchorRect === null || flow === null || blocked.length === 0) {
-          const at = placeAuto({ size, anchor: null, viewportCenter: startPoint(size), obstacles: blocked });
-          flow = { rowX: at.x, rowBottom: at.y + size.h };
-          return { at, frame: null };
+        const content = union(blocked);
+        if (anchorRect === null || content === null) {
+          return { at: placeAuto({ size, anchor: null, viewportCenter: startPoint(size), obstacles: blocked }), frame: null };
         }
-        const wraps = anchorRect.x + anchorRect.w + size.w - flow.rowX > ROW_WIDTH;
-        const at = wraps
-          ? placeAuto({
-              size,
-              anchor: { x: flow.rowX - size.w - 72, y: flow.rowBottom + ROW_GAP, w: size.w, h: size.h },
-              viewportCenter: startPoint(size),
-              obstacles: blocked,
-            })
-          : placeAuto({ size, anchor: anchorRect, viewportCenter: startPoint(size), obstacles: blocked });
-        flow = wraps ? { rowX: at.x, rowBottom: at.y + size.h } : { ...flow, rowBottom: Math.max(flow.rowBottom, at.y + size.h) };
-        return { at, frame: null };
+        // Beside the last thing, or a new row under everything: whichever keeps the whole board larger on screen.
+        const beside = placeAuto({ size, anchor: anchorRect, viewportCenter: startPoint(size), obstacles: blocked });
+        const row = nearestFree({ size, preferred: { x: content.x, y: content.y + content.h + ROW_GAP }, obstacles: blocked });
+        const zoomWith = (at: Point) => fitZoom(union([content, { ...at, ...size }]) ?? content);
+        return { at: zoomWith(row) > zoomWith(beside) * 1.05 ? row : beside, frame: null };
       }
       default: {
         const _exhaustive: never = placement;
@@ -341,15 +385,153 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     patch(tx, frameElementId, (el) => newElementWith(el, { x: next.x, y: next.y, width: next.w, height: next.h }));
   }
 
+  // ---- Settling ------------------------------------------------------------------------------
+
+  /** Agent blocks in the order they were placed this session; older ones sort first by scene order. */
+  const placedOrder = new Map<string, number>();
+  let placedSeq = 0;
+  const markPlaced = (key: string) => placedOrder.set(key, placedSeq++);
+
+  type BlockInfo = { block: Block; elementIds: string[]; nodeIds: NodeId[] };
+
+  /** Top-level blocks: frames with everything inside them, loose nodes, and pending cards. */
+  function blocksOf(elements: readonly ExcalidrawElement[]): BlockInfo[] {
+    const nodes = indexNodes(elements);
+    const index = new Map(elements.map((el, i) => [el.id, i]));
+    const live = elements.filter(isLive);
+    const order = (key: string, rootId: string) => placedOrder.get(key) ?? (index.get(rootId) ?? 0) - 1e6;
+    const out: BlockInfo[] = [];
+    for (const entry of nodes.values()) {
+      if (entry.kind === "edge" || entry.root.frameId !== null) continue;
+      const movable = entry.meta !== null;
+      if (entry.kind === "frame") {
+        const inside = live.filter((el) => el.frameId === entry.root.id);
+        const frameRect = boundsOf([entry.root]);
+        if (frameRect === null) continue;
+        const rect = boundsOf([entry.root, ...inside]) ?? frameRect;
+        const nodeIds = [entry.id, ...[...nodes.values()].filter((n) => n.root.frameId === entry.root.id).map((n) => n.id)];
+        out.push({
+          block: { key: entry.id, rect: withTitle(rect), movable, order: order(entry.id, entry.root.id) },
+          elementIds: [entry.root.id, ...inside.map((el) => el.id)],
+          nodeIds,
+        });
+        continue;
+      }
+      const rect = nodeRect(entry);
+      if (rect === null) continue;
+      out.push({ block: { key: entry.id, rect, movable, order: order(entry.id, entry.root.id) }, elementIds: entry.elements.map((el) => el.id), nodeIds: [entry.id] });
+    }
+    for (const card of pendingCards({ elements: [...elements], overlapsBefore: new Set() })) {
+      const key = `pending:${card.pendingId}`;
+      out.push({ block: { key, rect: card.rect, movable: true, order: placedOrder.get(key) ?? Number.MAX_SAFE_INTEGER }, elementIds: card.elementIds, nodeIds: [] });
+    }
+    return out;
+  }
+
+  /** Moves top-level blocks apart after a change, carrying frame contents along and re-aiming their arrows. */
+  function settle(tx: Tx) {
+    const blocks = blocksOf(tx.elements);
+    const moves = settleBlocks({ blocks: blocks.map((b) => b.block), ignore: tx.overlapsBefore });
+    if (moves.size === 0) return;
+    const touched = new Set<NodeId>();
+    for (const info of blocks) {
+      const delta = moves.get(info.block.key);
+      if (delta === undefined) continue;
+      for (const id of info.elementIds) patch(tx, id, (el) => translate(el, delta.x, delta.y));
+      for (const id of info.nodeIds) touched.add(id);
+    }
+    reroute(tx, touched);
+  }
+
+  /**
+   * Arrows sit under shapes so crossings stay tidy, but a label that lands on a shape would be hidden.
+   * Those arrows move to the top of the stack.
+   */
+  function liftHiddenLabels(tx: Tx) {
+    const nodes = indexNodes(tx.elements);
+    const solids: { rect: Rect }[] = [];
+    for (const entry of nodes.values()) {
+      if (entry.kind === "edge" || entry.kind === "frame") continue;
+      const rect = nodeRect(entry);
+      if (rect !== null) solids.push({ rect });
+    }
+    const lift: string[] = [];
+    for (const entry of nodes.values()) {
+      const arrow = entry.root;
+      if (entry.kind !== "edge" || arrow.type !== "arrow") continue;
+      const label = entry.elements.find((el) => el.type === "text");
+      const last = arrow.points.at(-1);
+      if (label === undefined || last === undefined) continue;
+      // Excalidraw centers a label on the middle point of a bent arrow, or halfway along a straight one.
+      const middle = arrow.points.length === 3 ? arrow.points[1] : undefined;
+      const mid = middle === undefined ? { x: arrow.x + last[0] / 2, y: arrow.y + last[1] / 2 } : { x: arrow.x + middle[0], y: arrow.y + middle[1] };
+      const box = { x: mid.x - label.width / 2, y: mid.y - label.height / 2, w: label.width, h: label.height };
+      if (solids.some((s) => overlaps(s.rect, box))) lift.push(...entry.elements.map((el) => el.id));
+    }
+    if (lift.length === 0) return;
+    const set = new Set(lift);
+    tx.elements = [...tx.elements.filter((el) => !set.has(el.id)), ...tx.elements.filter((el) => set.has(el.id))];
+  }
+
   // ---- Edges --------------------------------------------------------------------------------
 
-  function edgeEndpoints(from: NodeEntry, to: NodeEntry): { start: Point; end: Point } | null {
+  type Size = { w: number; h: number };
+
+  /** Rough size of an arrow label as buildArrow wraps it. */
+  function labelSize(label: string): Size {
+    if (label.trim().length === 0) return { w: 0, h: 0 };
+    const lines = wrap(label.trim(), 18).split("\n");
+    return { w: Math.max(...lines.map((l) => l.length)) * 17 * 0.56, h: lines.length * 22 };
+  }
+
+  type Route = { start: Point; end: Point; bend: Point | null };
+
+  /** Edge-to-edge line between two nodes, bent around any other node that sits in the way. */
+  function edgeRoute(args: { nodes: ReadonlyMap<NodeId, NodeEntry>; self: NodeId; from: NodeEntry; to: NodeEntry; label: Size }): Route | null {
+    const { nodes, self, from, to, label } = args;
     const a = nodeRect(from.kind === "mockup" || from.kind === "image" ? { ...from, elements: [from.root] } : from);
     const b = nodeRect(to.kind === "mockup" || to.kind === "image" ? { ...to, elements: [to.root] } : to);
     if (a === null || b === null) return null;
-    const start = edgePoint({ rect: a, outline: outlineOf(from.root), toward: center(b), gap: EDGE_GAP });
-    const end = edgePoint({ rect: b, outline: outlineOf(to.root), toward: center(a), gap: EDGE_GAP });
-    return { start, end };
+    const straight = {
+      start: edgePoint({ rect: a, outline: outlineOf(from.root), toward: center(b), gap: EDGE_GAP }),
+      end: edgePoint({ rect: b, outline: outlineOf(to.root), toward: center(a), gap: EDGE_GAP }),
+    };
+    const obstacles: Rect[] = [];
+    for (const entry of nodes.values()) {
+      if (entry.kind === "edge" || entry.kind === "frame" || entry.id === from.id || entry.id === to.id) continue;
+      const rect = nodeRect(entry);
+      if (rect !== null) obstacles.push(inflate(rect, 12));
+    }
+    // A second edge between the same pair (often the reply direction) bows out so the two labels don't stack.
+    const twin = [...nodes.values()].some((n) => {
+      const m = n.meta;
+      return n.id !== self && m !== null && m.kind === "edge" && ((m.from === from.id && m.to === to.id) || (m.from === to.id && m.to === from.id));
+    });
+    const bend = bendAround({ ...straight, obstacles }) ?? (twin ? bow(straight, label) : null);
+    if (bend === null) return { ...straight, bend: null };
+    return {
+      start: edgePoint({ rect: a, outline: outlineOf(from.root), toward: bend, gap: EDGE_GAP }),
+      end: edgePoint({ rect: b, outline: outlineOf(to.root), toward: bend, gap: EDGE_GAP }),
+      bend,
+    };
+  }
+
+  /**
+   * A point beside the middle of a line, far enough out that the edge's own label clears the line.
+   * A->B and B->A bow to opposite sides, so twin edges and their labels split apart.
+   */
+  function bow(line: { start: Point; end: Point }, label: Size): Point {
+    const { start: a, end: b } = line;
+    const len = Math.max(Math.hypot(b.x - a.x, b.y - a.y), 1);
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    const offset = Math.max(28, (Math.abs(nx) * label.w + Math.abs(ny) * label.h) / 2 + 10);
+    return { x: (a.x + b.x) / 2 + nx * offset, y: (a.y + b.y) / 2 + ny * offset };
+  }
+
+  function routeGeometry(route: Route) {
+    const { start, end, bend } = route;
+    return arrowGeometry({ x: start.x, y: start.y, dx: end.x - start.x, dy: end.y - start.y, bend: bend === null ? null : { x: bend.x - start.x, y: bend.y - start.y } });
   }
 
   function addEdge(tx: Tx, op: Extract<BoardOp, { op: "add_edge" }>): ExcalidrawElement[] {
@@ -357,8 +539,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const from = nodes.get(op.from);
     const to = nodes.get(op.to);
     if (from === undefined || to === undefined || op.from === op.to) return [];
-    const ends = edgeEndpoints(from, to);
+    const ends = edgeRoute({ nodes, self: op.id, from, to, label: labelSize(op.label) });
     if (ends === null) return [];
+    const geometry = routeGeometry(ends);
     const built = buildArrow({
       nodeId: op.id,
       id: ids(op.id),
@@ -374,6 +557,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       el.id === built.rootId && el.type === "arrow"
         ? {
             ...el,
+            ...geometry,
             startBinding: { elementId: from.root.id, focus: 0, gap: EDGE_GAP },
             endBinding: { elementId: to.root.id, focus: 0, gap: EDGE_GAP },
           }
@@ -385,22 +569,23 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   }
 
   /** Re-aims every arrow touching `nodeIds` after those nodes moved or changed size. */
-  function reroute(tx: Tx, nodeIds: ReadonlySet<NodeId>) {
+  function reroute(tx: Tx, nodeIds: ReadonlySet<NodeId>, options: { agentOnly: boolean } = { agentOnly: false }) {
     const nodes = indexNodes(tx.elements);
     for (const entry of nodes.values()) {
       if (entry.kind !== "edge" || entry.root.type !== "arrow") continue;
       const arrow = entry.root;
       const meta = entry.meta;
+      if (options.agentOnly && meta === null) continue;
       const fromId = meta !== null && meta.kind === "edge" ? meta.from : nodeIdForElement(nodes, arrow.startBinding?.elementId ?? null);
       const toId = meta !== null && meta.kind === "edge" ? meta.to : nodeIdForElement(nodes, arrow.endBinding?.elementId ?? null);
       if (fromId === null || toId === null || (!nodeIds.has(fromId) && !nodeIds.has(toId))) continue;
       const from = nodes.get(fromId);
       const to = nodes.get(toId);
       if (from === undefined || to === undefined) continue;
-      const ends = edgeEndpoints(from, to);
+      const text = entry.elements.find((el) => el.type === "text");
+      const ends = edgeRoute({ nodes, self: entry.id, from, to, label: text === undefined ? { w: 0, h: 0 } : { w: text.width, h: text.height } });
       if (ends === null) continue;
-      const geometry = arrowGeometry({ x: ends.start.x, y: ends.start.y, dx: ends.end.x - ends.start.x, dy: ends.end.y - ends.start.y });
-      if (geometry === null) continue;
+      const geometry = routeGeometry(ends);
       patch(tx, arrow.id, (el) =>
         el.type === "arrow"
           ? newElementWith(el, {
@@ -412,6 +597,19 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       );
       // Arrow labels are positioned by Excalidraw relative to the arrow midpoint on render.
     }
+  }
+
+  /** Re-aims every agent arrow, so lines bend around whatever landed on them. User-drawn arrows keep their shape. */
+  function rerouteAgentEdges(tx: Tx) {
+    const ids = new Set<NodeId>();
+    for (const entry of indexNodes(tx.elements).values()) {
+      const meta = entry.meta;
+      if (meta !== null && meta.kind === "edge") {
+        ids.add(meta.from);
+        ids.add(meta.to);
+      }
+    }
+    reroute(tx, ids, { agentOnly: true });
   }
 
   function nodeIdForElement(nodes: ReadonlyMap<NodeId, NodeEntry>, elementId: string | null): NodeId | null {
@@ -447,21 +645,22 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const rect = boundsOf(fresh);
     if (rect === null) return;
     const state = api.getAppState();
+    const insets = chromeInsets(state.width);
     const zoom = state.zoom.value;
     const [minX, minY, maxX, maxY] = getVisibleSceneBounds(state);
     const visible = {
-      x: minX + CHROME_INSETS.left / zoom,
-      y: minY + CHROME_INSETS.top / zoom,
-      w: maxX - minX - (CHROME_INSETS.left + CHROME_INSETS.right) / zoom,
-      h: maxY - minY - (CHROME_INSETS.top + CHROME_INSETS.bottom) / zoom,
+      x: minX + insets.left / zoom,
+      y: minY + insets.top / zoom,
+      w: maxX - minX - (insets.left + insets.right) / zoom,
+      h: maxY - minY - (insets.top + insets.bottom) / zoom,
     };
     // Recenter a little before items touch the edge, not after.
     const margin = 48 / zoom;
     if (contains({ x: visible.x + margin, y: visible.y + margin, w: visible.w - margin * 2, h: visible.h - margin * 2 }, rect)) return;
     // Fit the whole board while it stays readable; past that (small screens, big boards) frame the new items.
     const all = boundsOf(live);
-    const screenW = state.width - CHROME_INSETS.left - CHROME_INSETS.right;
-    const screenH = state.height - CHROME_INSETS.top - CHROME_INSETS.bottom;
+    const screenW = state.width - insets.left - insets.right;
+    const screenH = state.height - insets.top - insets.bottom;
     const fitZoom = all === null ? 1 : Math.min(screenW / Math.max(all.w, 1), screenH / Math.max(all.h, 1)) * 0.92;
     const target = fitZoom >= MIN_READABLE_ZOOM ? live : fresh;
     api.scrollToContent(target, {
@@ -471,7 +670,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       duration: 650,
       maxZoom: 1,
       minZoom: target === live ? 0.1 : MIN_READABLE_ZOOM,
-      canvasOffsets: CHROME_INSETS,
+      canvasOffsets: insets,
     });
   }
 
@@ -526,9 +725,18 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   function addNode(op: Extract<BoardOp, { op: "add_shape" | "add_frame" | "add_mockup" | "add_image" }>) {
     const tx = begin();
     const existing = liveEntry(tx, op.id);
+    if (existing !== undefined && existing.kind === "frame" && op.op === "add_frame") {
+      // Re-declaring a frame renames it; replacing it would strand its children.
+      const root = existing.root;
+      patch(tx, root.id, (el) => (el.type === "frame" || el.type === "magicframe" ? newElementWith(el, { name: op.title }) : el));
+      commit(tx);
+      lastPlaced = op.id;
+      return;
+    }
     if (existing !== undefined) {
       // Re-adding an id replaces the node in place; edges re-attach below.
       remove(tx, new Set(existing.elements.map((el) => el.id)));
+      if (existing.kind === "frame") releaseChildren(tx, existing.root.id);
     }
     const id = ids(op.id);
     let built: Built;
@@ -592,8 +800,14 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     finishAdd(tx, op.id, placed, existing !== undefined);
   }
 
+  /** Children of a frame that is going away become loose items where they stand. */
+  function releaseChildren(tx: Tx, frameElementId: string) {
+    tx.elements = tx.elements.map((el) => (el.frameId === frameElementId && !el.isDeleted ? newElementWith(el, { frameId: null }) : el));
+  }
+
   function finishAdd(tx: Tx, nodeId: NodeId, placed: readonly ExcalidrawElement[], replaced: boolean) {
     if (replaced) reroute(tx, new Set([nodeId]));
+    markPlaced(nodeId);
     commit(tx);
     lastPlaced = nodeId;
     const isMockup = placed.some((el) => readMeta(el)?.kind === "mockup");
@@ -640,6 +854,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         if (el.id === entry.root.id) replace(tx, { ...moved, version: entry.root.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) });
         else insert(tx, [moved], null);
       }
+      if (entry.root.frameId !== null) refitFrame(tx, entry.root.frameId);
       reroute(tx, new Set([op.id]));
       commit(tx);
       return;
@@ -651,7 +866,14 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       else if (entry.kind === "shape") patch(tx, entry.root.id, (el) => newElementWith(el, { strokeColor: swatch.stroke, backgroundColor: swatch.fill }));
     }
 
-    if (op.label !== undefined) {
+    if (op.label !== undefined && entry.kind === "edge" && meta !== null && meta.kind === "edge") {
+      // Rebuild agent edges so the new label is wrapped, measured and routed like a fresh one.
+      const stroke = op.color !== undefined ? SWATCHES[op.color].stroke : entry.root.strokeColor;
+      remove(tx, new Set(entry.elements.map((el) => el.id)));
+      for (const el of addEdge(tx, { op: "add_edge", id: op.id, from: meta.from, to: meta.to, label: op.label })) {
+        if (el.type === "arrow") patch(tx, el.id, (current) => newElementWith(current, { strokeColor: stroke }));
+      }
+    } else if (op.label !== undefined) {
       const label = op.label;
       const root = entry.root;
       if (root.type === "frame" || root.type === "magicframe") {
@@ -663,10 +885,6 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         const target = bound?.id ?? entry.elements.find((el) => el.type === "text" && el.containerId === null)?.id;
         if (target !== undefined) {
           patch(tx, target, (el) => (el.type === "text" && el.containerId !== null ? newElementWith(el, { text: label, originalText: label }) : retext(el, label)));
-        } else if (entry.kind === "edge" && meta !== null && meta.kind === "edge") {
-          // Unlabeled agent edge gaining a label: rebuild it.
-          remove(tx, new Set(entry.elements.map((el) => el.id)));
-          addEdge(tx, { op: "add_edge", id: op.id, from: meta.from, to: meta.to, label });
         }
       }
     }
@@ -703,6 +921,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       if (id !== null) touched.add(id);
     }
     reroute(tx, touched);
+    // A moved block counts as the newest, so it is the one that steps aside if it lands on something.
+    markPlaced(op.id);
     commit(tx);
     lastPlaced = op.id;
     const placed = tx.elements.filter((el) => own.has(el.id));
@@ -754,7 +974,6 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         remove(tx, new Set(tx.elements.map((el) => el.id)));
         commit(tx);
         lastPlaced = null;
-        flow = null;
         return;
       }
       default: {
@@ -767,7 +986,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   // ---- Summary ------------------------------------------------------------------------------
 
   function getSummary(): BoardSummary {
-    const elements = api.getSceneElementsIncludingDeleted();
+    const elements = dedupeNodeIds(api.getSceneElementsIncludingDeleted());
     const nodes = indexNodes(elements);
     const byId = new Map(elements.map((el) => [el.id, el]));
     const nodeOfElement = new Map<string, NodeId>();
@@ -805,6 +1024,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const tx = begin();
     if (pendingCards(tx).some((p) => p.pendingId === args.id)) return;
     const built = buildPending({ pendingId: args.id, id: ids("pending"), label: args.label });
+    markPlaced(`pending:${args.id}`);
     const placed = place(tx, built, { kind: "auto" });
     commit(tx, "silent");
     animator.fadeIn([placed], 0);

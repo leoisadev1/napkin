@@ -1110,6 +1110,45 @@
   }
 }
 
+/* Short phones (320x568 and similar): the dock owns the lower half, so the invitation compacts to fit above it. */
+@media (max-width: 730px) and (max-height: 740px) {
+  .empty {
+    padding-top: 112px;
+    padding-bottom: calc(var(--dock-bottom) + 172px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .empty-title {
+    font-size: 30px;
+  }
+
+  .empty-sub {
+    display: none;
+  }
+
+  .prompts {
+    gap: 6px;
+    margin-top: 14px;
+  }
+
+  .prompt {
+    padding: 8px 12px;
+  }
+
+  .prompt-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .prompt-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: 13.5px;
+    line-height: 1.35;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orb-ring,
   .orb-dots i,

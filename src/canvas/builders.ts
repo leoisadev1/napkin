@@ -2,7 +2,7 @@
 // position with the layout engine, then translates every element of the node there.
 import { convertToExcalidrawElements, ROUNDNESS } from "@excalidraw/excalidraw";
 import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform";
-import type { ExcalidrawElement, FileId } from "@excalidraw/excalidraw/element/types";
+import type { ExcalidrawArrowElement, ExcalidrawElement, FileId } from "@excalidraw/excalidraw/element/types";
 import type { Color, MockupComponent, ShapeKind } from "../../shared/board";
 import type { NodeMeta } from "./meta";
 import { metaData } from "./meta";
@@ -68,7 +68,8 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
   const swatch = SWATCHES[color];
   const rootId = id("root");
   const meta = (elId: string): NodeMeta => ({ kind: "shape", nodeId, role: elId === rootId ? "root" : "part", shape, color });
-  const fontSize = 20;
+  // A notch above Excalidraw's default so labels stay legible when a full board is fit to the screen.
+  const fontSize = 22;
   const textWidth = label.length * fontSize * CHAR_WIDTH;
   const base = {
     id: rootId,
@@ -87,7 +88,7 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
       return {
         rootId,
         elements: finish(
-          [{ ...base, type: "rectangle", width: clamp(textWidth + 56, 160, 280), height: 76, roundness: ADAPTIVE, label: textLabel }],
+          [{ ...base, type: "rectangle", width: clamp(textWidth + 56, 170, 300), height: 80, roundness: ADAPTIVE, label: textLabel }],
           meta,
         ),
       };
@@ -121,7 +122,7 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
               strokeWidth: 1,
               backgroundColor: STICKY_FILL[color],
               roundness: null,
-              label: { ...textLabel, fontSize: 18 },
+              label: { ...textLabel, fontSize: 20 },
             },
           ],
           meta,
@@ -224,7 +225,7 @@ export function buildArrow(args: {
     roughness: ROUGHNESS,
     endArrowhead: "arrow",
     ...(args.label.trim().length > 0
-      ? { label: { text: args.label, fontSize: 16, fontFamily: HAND_FONT, strokeColor: INK_SOFT } }
+      ? { label: { text: wrap(args.label.trim(), 18), fontSize: 17, fontFamily: HAND_FONT, strokeColor: INK_SOFT } }
       : {}),
   };
   const elements = finish([skeleton], (elId) => ({
@@ -237,13 +238,30 @@ export function buildArrow(args: {
   return { rootId, elements };
 }
 
-/** Fresh arrow geometry for rerouting an existing arrow; Excalidraw needs its own point type. */
-export function arrowGeometry(args: { x: number; y: number; dx: number; dy: number }) {
-  const [arrow] = convertToExcalidrawElements([
-    { type: "arrow", x: args.x, y: args.y, width: nonZero(args.dx), height: nonZero(args.dy) },
-  ]);
-  if (arrow === undefined || arrow.type !== "arrow") return null;
-  return { x: arrow.x, y: arrow.y, width: arrow.width, height: arrow.height, points: arrow.points };
+type LocalPoint = ExcalidrawArrowElement["points"][number];
+
+/** Excalidraw's point brand is nominal; this is the one place plain numbers become a LocalPoint, as in its own pointFrom. */
+function localPoint(x: number, y: number): LocalPoint {
+  return [x, y] as LocalPoint;
+}
+
+/**
+ * Arrow geometry from (x, y) by (dx, dy), optionally curving through `bend` (relative to the start) so it clears
+ * whatever sits on the straight line.
+ */
+export function arrowGeometry(args: { x: number; y: number; dx: number; dy: number; bend: { x: number; y: number } | null }) {
+  const end = localPoint(nonZero(args.dx), nonZero(args.dy));
+  const points = args.bend === null ? [localPoint(0, 0), end] : [localPoint(0, 0), localPoint(args.bend.x, args.bend.y), end];
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  return {
+    x: args.x,
+    y: args.y,
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+    points,
+    roundness: { type: ROUNDNESS.PROPORTIONAL_RADIUS },
+  };
 }
 
 function nonZero(value: number): number {
@@ -257,7 +275,7 @@ type Device = "phone" | "desktop";
 type Cursor = { skeletons: ExcalidrawElementSkeleton[]; y: number };
 
 const DEVICE = {
-  phone: { width: 300, minHeight: 600, pad: 16, top: 44, gap: 14, imageHeight: 130 },
+  phone: { width: 300, minHeight: 560, pad: 16, top: 44, gap: 14, imageHeight: 130 },
   desktop: { width: 720, minHeight: 450, pad: 24, top: 52, gap: 16, imageHeight: 170 },
 } as const;
 

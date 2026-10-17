@@ -1,15 +1,8 @@
 // Plain-rectangle geometry for layout and edge routing. Scene coordinates throughout.
-import { getCommonBounds } from "@excalidraw/excalidraw";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
+// Pure: no Excalidraw imports, so layout stays unit-testable outside a browser.
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Point = { x: number; y: number };
-
-export function boundsOf(elements: readonly ExcalidrawElement[]): Rect | null {
-  if (elements.length === 0) return null;
-  const [minX, minY, maxX, maxY] = getCommonBounds(elements);
-  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-}
 
 export function union(rects: readonly Rect[]): Rect | null {
   const [first, ...rest] = rects;
@@ -82,4 +75,51 @@ export function edgePoint(args: { rect: Rect; outline: Outline; toward: Point; g
     }
   }
   return { x: c.x + ux * (t + gap), y: c.y + uy * (t + gap) };
+}
+
+/** True when the segment from `a` to `b` passes through `r` (Liang-Barsky clipping). */
+export function segmentHitsRect(a: Point, b: Point, r: Rect): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: [number, number][] = [
+    [-dx, a.x - r.x],
+    [dx, r.x + r.w - a.x],
+    [-dy, a.y - r.y],
+    [dy, r.y + r.h - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (Math.abs(p) < 1e-9) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+/**
+ * A point to bend an arrow through so it clears `obstacles`, or null when the straight line is already clear.
+ * Tries offsets perpendicular to the line at its midpoint, nearest first.
+ */
+export function bendAround(args: { start: Point; end: Point; obstacles: readonly Rect[] }): Point | null {
+  const { start, end, obstacles } = args;
+  const blocked = (a: Point, b: Point) => obstacles.some((r) => segmentHitsRect(a, b, r));
+  if (!blocked(start, end)) return null;
+  const len = Math.hypot(end.x - start.x, end.y - start.y);
+  if (len < 1) return null;
+  const nx = -(end.y - start.y) / len;
+  const ny = (end.x - start.x) / len;
+  const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  for (let offset = 48; offset <= 640; offset += 32) {
+    for (const sign of [1, -1]) {
+      const bend = { x: mid.x + nx * offset * sign, y: mid.y + ny * offset * sign };
+      if (!blocked(start, bend) && !blocked(bend, end)) return bend;
+    }
+  }
+  return null;
 }
