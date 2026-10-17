@@ -41,4 +41,4 @@ async function secret() {
   try { return z.string().min(32).parse((await readFile('.data/lwc-secret', 'utf8')).trim()); }
   catch { const value = crypto.randomUUID() + crypto.randomUUID(); await writeFile('.data/lwc-secret', value, { mode: 0o600 }); return value; }
 }
-export const auth = createChatGPTHandler({ secret: await secret(), sessionStore });
+export const auth = createChatGPTHandler({ secret: await secret(), sessionStore, allowedOrigins: config().ALLOWED_ORIGINS });

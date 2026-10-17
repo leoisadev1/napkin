@@ -34,3 +34,10 @@ test('TTS buffers subwords and keeps punctuation attached', () => {
   expect(words.push('Hel')).toBe(''); expect(words.push('lo')).toBe(''); expect(words.push(', world')).toBe('Hello,');
   expect(words.push('! ')).toBe('world!'); expect(words.finish()).toBe('');
 });
+
+test('word buffer releases a sentence-final word without waiting for a trailing space', () => {
+  const words = new WordBuffer();
+  expect(words.push('or friendly')).toBe('or');
+  expect(words.push(' accountability?')).toBe('friendly accountability?');
+  expect(words.finish()).toBe('');
+});

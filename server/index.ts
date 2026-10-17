@@ -26,7 +26,7 @@ export async function readBoundedBody(request: Request, limit = 256_000) {
 export async function handleRequest(request: Request, ip = 'local'): Promise<Response> {
   const url = new URL(request.url);
   const origin = request.headers.get('origin');
-  if (origin && origin !== url.origin && (url.pathname === '/api/agent' || url.pathname === '/api/gradium/token')) return Response.json({ error: 'Origin not allowed' }, { status: 403 });
+  if (origin && origin !== url.origin && !config().ALLOWED_ORIGINS.includes(origin) && (url.pathname === '/api/agent' || url.pathname === '/api/gradium/token')) return Response.json({ error: 'Origin not allowed' }, { status: 403 });
   if (url.pathname.startsWith('/api/chatgpt/')) return auth.handler(request);
   if (url.pathname === '/api/status' && request.method === 'GET') {
     const session = await auth.getSession(request);

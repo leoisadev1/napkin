@@ -9,6 +9,8 @@ const Config = z.object({
   DEV_LLM_API_KEY: z.string().default('dev-only'),
   DEV_LLM_MODEL: z.string().default('gpt-6-luna'),
   DEV_IMAGE_MODEL: z.string().default('gpt-image-1'),
+  /** Extra browser origins allowed to call the API, comma separated. Needed behind an HTTPS proxy such as Tailscale Serve. */
+  ALLOWED_ORIGINS: z.string().default('').transform(value => value.split(',').map(origin => origin.trim()).filter(Boolean)),
 });
 export function config() {
   return Config.parse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== '')));

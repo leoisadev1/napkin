@@ -6,6 +6,8 @@ export class WordBuffer {
   private buffer = '';
   push(text: string) {
     this.buffer += text;
+    // A sentence-final word can go out now; waiting for the next space can stall the last word of a reply.
+    if (/[.!?]["')\]]?$/.test(this.buffer.trimEnd())) { const complete = this.buffer.trim(); this.buffer = ''; return complete; }
     const index = this.buffer.search(/\s+\S*$/);
     if (index < 0) return '';
     const complete = this.buffer.slice(0, index).trim(); this.buffer = this.buffer.slice(index).trimStart(); return complete;
