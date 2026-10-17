@@ -1979,9 +1979,27 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   // ---- Pacing and the partner's cursor ---------------------------------------------------------
 
+  /** Agent frames that lost every child (contents moved into a diagram, deleted, or moved out) are removed. */
+  function sweepEmptyFrames() {
+    const tx = begin();
+    const occupied = new Set<string>();
+    for (const el of tx.elements) if (!el.isDeleted && el.frameId !== null) occupied.add(el.frameId);
+    const empty = new Set<string>();
+    for (const el of tx.elements) {
+      if (el.isDeleted || el.type !== "frame" || occupied.has(el.id) || isDormantFrame(el)) continue;
+      const meta = readMeta(el);
+      if (meta !== null && meta.kind === "frame") empty.add(el.id);
+    }
+    if (empty.size === 0) return;
+    remove(tx, empty);
+    commit(tx, "undoable", { ghosts: true });
+  }
+
   const runSafely = guard((task: PacedTask) => {
-    if (task.kind === "op") apply(task.op);
-    else task.run();
+    if (task.kind === "op") {
+      apply(task.op);
+      if (task.op.op !== "add_frame") sweepEmptyFrames();
+    } else task.run();
   }, undefined);
   const pacer = createPacer({
     run: runSafely,
