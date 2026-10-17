@@ -2,7 +2,7 @@
 // calls made before the canvas is ready are queued and replayed once the real bridge attaches.
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { BoardOp } from "../../shared/board";
-import type { CanvasBridge } from "./bridge";
+import type { CanvasBridge, PartnerActivity, PointerSample } from "./bridge";
 import { createBoardBridge, DEFAULT_TITLE } from "./bridge";
 
 type Queued =
@@ -19,6 +19,8 @@ export function createBridgeHost(options: { onError?: (error: unknown) => void }
   let real: CanvasBridge | null = null;
   let title = DEFAULT_TITLE;
   const queue: Queued[] = [];
+  let pointer: PointerSample = null;
+  let activity: PartnerActivity = { kind: "idle" };
   const titleListeners = new Set<(title: string) => void>();
   const notify = (next: string) => {
     title = next;
@@ -31,7 +33,7 @@ export function createBridgeHost(options: { onError?: (error: unknown) => void }
       else real.apply(op);
     },
     getSummary() {
-      return real === null ? { title, items: [], selection: [] } : real.getSummary();
+      return real === null ? { title, items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 0, h: 0 } } : real.getSummary();
     },
     showPending(args) {
       if (real === null) queue.push({ kind: "showPending", ...args });
@@ -40,6 +42,14 @@ export function createBridgeHost(options: { onError?: (error: unknown) => void }
     clearPending(id) {
       if (real === null) queue.push({ kind: "clearPending", id });
       else real.clearPending(id);
+    },
+    trackPointer(sample) {
+      pointer = sample;
+      real?.trackPointer(sample);
+    },
+    setPartner(next) {
+      activity = next;
+      real?.setPartner(next);
     },
     getTitle: () => title,
     setTitle(next) {
@@ -60,6 +70,8 @@ export function createBridgeHost(options: { onError?: (error: unknown) => void }
     instance.setTitle(title);
     const unsubscribe = instance.subscribeTitle(notify);
     real = instance;
+    instance.trackPointer(pointer);
+    instance.setPartner(activity);
     for (const item of queue.splice(0)) {
       switch (item.kind) {
         case "apply":

@@ -4,12 +4,14 @@ import type { FormEvent } from "react";
 import type { Conversation } from "../conversation/types";
 import { PencilIcon, SendIcon } from "./icons";
 import { LiveLine } from "./LiveLine";
-import { MicToggle, micState } from "./MicToggle";
+import { MicToggle, micState, MuteButton } from "./MicToggle";
 import { Suggestions } from "./Suggestions";
 
 export function VoiceDock({ conversation }: { conversation: Conversation }) {
   const [draft, setDraft] = useState("");
   const mic = micState(conversation);
+  // Tidying explains why things the user already saw start moving around.
+  const working = conversation.refining ? "Tidying up" : conversation.sketching ? "Sketching" : null;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -25,6 +27,7 @@ export function VoiceDock({ conversation }: { conversation: Conversation }) {
       <LiveLine conversation={conversation} mic={mic} />
       <div className="bar">
         <MicToggle conversation={conversation} />
+        {mic === "live" && <MuteButton muted={conversation.muted} onToggle={() => conversation.setMuted(!conversation.muted)} />}
         <span className="bar-divider" aria-hidden="true" />
         <form className="composer" onSubmit={submit}>
           <label className="sr-only" htmlFor="composer-input">
@@ -40,9 +43,9 @@ export function VoiceDock({ conversation }: { conversation: Conversation }) {
             enterKeyHint="send"
             maxLength={4000}
           />
-          <span className="sketching" data-active={conversation.sketching} role="status" aria-live="polite">
+          <span className="sketching" data-active={working !== null} role="status" aria-live="polite">
             <PencilIcon size={14} strokeWidth={2} />
-            <span>{conversation.sketching ? "Sketching" : ""}</span>
+            <span>{working ?? ""}</span>
           </span>
           <button className="composer-send" type="submit" aria-label="Send" data-ready={draft.trim().length > 0}>
             <SendIcon size={18} strokeWidth={2} />

@@ -6,6 +6,7 @@ import { BoardCanvas } from "./canvas/BoardCanvas";
 import { createBridgeHost } from "./canvas/host";
 import { useConversation } from "./conversation/select";
 import { EmptyState } from "./ui/EmptyState";
+import { micState, MUTE_KEY } from "./ui/MicToggle";
 import { TranscriptIcon } from "./ui/icons";
 import { SignIn } from "./ui/SignIn";
 import { TitleIsland } from "./ui/TitleIsland";
@@ -18,6 +19,12 @@ declare global {
     rtwBridge?: import("./canvas/bridge").CanvasBridge;
     rtwApi?: ExcalidrawImperativeAPI;
   }
+}
+
+/** True when a key press belongs to whatever has focus: a text field, or text being edited on the board. */
+function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
 }
 
 function reportCanvasError(error: unknown) {
@@ -64,12 +71,36 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase.kind, interrupt]);
 
+  // M mutes and unmutes while the mic is live. Ignored while typing, with modifiers, or while editing board text.
+  const live = micState(conversation) === "live";
+  const { muted, setMuted } = conversation;
+  useEffect(() => {
+    if (!live) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== MUTE_KEY || event.repeat || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isTyping(event.target) || api?.getAppState().editingTextElement != null) return;
+      event.preventDefault();
+      setMuted(!muted);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [live, muted, setMuted, api]);
+
+  // The partner's cursor answers within a beat: it heads to where a heard phrase will land, or says it is tidying up.
+  const drawingKey = conversation.pendingPhrases.find((p) => p.status === "drawing")?.id ?? null;
+  const lastUser = conversation.transcript.findLast((entry) => entry.role === "user")?.id ?? null;
+  const thinkingKey = drawingKey ?? (phase.kind === "thinking" ? lastUser : null);
+  const { refining } = conversation;
+  useEffect(() => {
+    host.bridge.setPartner(refining ? { kind: "tidying" } : thinkingKey !== null ? { kind: "thinking", key: thinkingKey } : { kind: "idle" });
+  }, [host, refining, thinkingKey]);
+
   const resting = phase.kind === "idle" || phase.kind === "error";
   const showEmpty = resting && !canvas.hasContent && conversation.transcript.length === 0 && conversation.partial.length === 0;
 
   return (
     <div className="app">
-      <BoardCanvas onApi={setApi} onState={setCanvas} />
+      <BoardCanvas onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} />
       <TitleIsland title={title} onRename={(next) => host.bridge.setTitle(next)} />
       <div className="top-right">
         <SignIn />
