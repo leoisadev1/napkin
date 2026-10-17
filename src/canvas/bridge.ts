@@ -20,10 +20,14 @@ import { boxAround, center, contains, edgePoint, inflate, labelPointOf, overlaps
 import { mimeOf, readImageSize } from "./imageSize";
 import { dedupeNodeIds } from "./identity";
 import type { Block } from "./layout";
-import { besideSpot, fitFrame, isFree, nearestFree, overlappingPairs, placeAuto, placeInside, placeNear, settleBlocks } from "./layout";
+import { besideSpot, fitFrame, isFree, nearestFree, overlappingPairs, pairKey, placeAtPoint, placeAuto, placeInView, placeInside, placeNear, placeOver, settleBlocks } from "./layout";
 import type { NodeKind, NodeMeta } from "./meta";
 import { metaData, nodeIdOf, readMeta } from "./meta";
+import type { PacedTask } from "./pacer";
+import { createPacer } from "./pacer";
 import { SWATCHES } from "./palette";
+import type { SketchPart } from "./sketches";
+import { groupSketches, sketchIdOf, withSketchId } from "./sketches";
 
 export const DEFAULT_TITLE = "Untitled board";
 
@@ -56,7 +60,16 @@ function isNormalizedZoom(value: number): value is NormalizedZoomValue {
   return Number.isFinite(value) && value >= 0.1 && value <= 30;
 }
 
+/** What the partner is up to, shown on its cursor: nothing, about to draw something it just heard, or tidying up. */
+export type PartnerActivity = { kind: "idle" } | { kind: "thinking"; key: string } | { kind: "tidying" };
+
+/** The user's mouse in screen coordinates, or null when it left the window or the input is touch. */
+export type PointerSample = { clientX: number; clientY: number } | null;
+
 export interface CanvasBridge extends BoardBridge {
+  /** Where the user's mouse is, so "here" and "this" resolve and new things land where they are looking. */
+  trackPointer(sample: PointerSample): void;
+  setPartner(activity: PartnerActivity): void;
   getTitle(): string;
   setTitle(title: string): void;
   /** Fires when the title changes, from either the agent or the user. */
@@ -66,7 +79,8 @@ export interface CanvasBridge extends BoardBridge {
 
 type NodeEntry = {
   id: NodeId;
-  kind: NodeKind;
+  /** "sketch" groups loose user strokes (see sketches.ts); it has no agent meta. */
+  kind: NodeKind | "sketch";
   root: ExcalidrawElement;
   /** Every element that belongs to the node. Frames list only themselves, not their children. */
   elements: ExcalidrawElement[];
@@ -124,6 +138,7 @@ function indexNodes(elements: readonly ExcalidrawElement[]): Map<NodeId, NodeEnt
   const byId = new Map(live.map((el) => [el.id, el]));
   const roots: NodeEntry[] = [];
   const parts = new Map<NodeId, ExcalidrawElement[]>();
+  const sketches = new Map<NodeId, ExcalidrawElement[]>();
 
   for (const el of live) {
     const meta = readMeta(el);
@@ -139,6 +154,11 @@ function indexNodes(elements: readonly ExcalidrawElement[]): Map<NodeId, NodeEnt
     if (meta !== null) continue;
     // User-drawn element. Bound text belongs to its container.
     if (containerIdOf(el) !== null && byId.has(containerIdOf(el) ?? "")) continue;
+    const sketch = sketchIdOf(el);
+    if (sketch !== null) {
+      sketches.set(sketch, [...(sketches.get(sketch) ?? []), el]);
+      continue;
+    }
     const id = userNodeId(el.id);
     if (id === null) continue;
     const kind: NodeKind | null =
@@ -157,6 +177,21 @@ function indexNodes(elements: readonly ExcalidrawElement[]): Map<NodeId, NodeEnt
       return child === undefined ? [] : [child];
     });
     roots.push({ id, kind, root: el, elements: [el, ...bound], extent: [], meta: null, diagram: null });
+  }
+
+  for (const [id, members] of sketches) {
+    const area = (el: ExcalidrawElement) => el.width * el.height;
+    const boxes = members.filter((el) => el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond");
+    // The root is what arrows bind to and what gives the outline: the biggest box, else the biggest stroke.
+    const root = [...(boxes.length > 0 ? boxes : members)].sort((a, b) => area(b) - area(a))[0];
+    if (root === undefined) continue;
+    const labels = members.flatMap((el) =>
+      (el.boundElements ?? []).flatMap((b) => {
+        const child = b.type === "text" ? byId.get(b.id) : undefined;
+        return child === undefined ? [] : [child];
+      }),
+    );
+    roots.push({ id, kind: "sketch", root, elements: [...members, ...labels], extent: [], meta: null, diagram: null });
   }
 
   for (const entry of roots) {
@@ -212,6 +247,11 @@ function labelOf(entry: NodeEntry, byId: ReadonlyMap<string, ExcalidrawElement>)
     const shown = textOf(root);
     return normalizeText(shown) === normalizeText(meta.spec.title) ? meta.spec.title : shown;
   }
+  if (entry.kind === "sketch") {
+    // Words written on or under the sketch, top to bottom.
+    const texts = entry.elements.filter((el) => el.type === "text").sort((a, b) => a.y - b.y || a.x - b.x);
+    return texts.map((el) => normalizeText(textOf(el))).filter((t) => t.length > 0).join(" ");
+  }
   if (root.type === "frame" || root.type === "magicframe") return frameTitle(root);
   if (root.type === "text") return textOf(root);
   const bound = (root.boundElements ?? []).find((b) => b.type === "text");
@@ -227,11 +267,23 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let title = DEFAULT_TITLE;
   let seq = 0;
   let lastPlaced: NodeId | null = null;
+  /** When the agent last placed or moved something, to tell whether the user's mouse moved on since. */
+  let lastPlacedAt = 0;
+  let pointer: { clientX: number; clientY: number; at: number } | null = null;
+  /** Where recently deleted nodes were, so `at` can still take the spot of something a refine just removed. */
+  const gone = new Map<NodeId, { rect: Rect; frameId: string | null; at: number }>();
+
+  function noteActivity(id: NodeId) {
+    lastPlaced = id;
+    lastPlacedAt = performance.now();
+  }
   let followTimer: number | null = null;
   /** Elements the camera should show after the next follow: the new item, and nearby context when it fits. */
   const pendingFollow = { core: new Set<string>(), context: new Set<string>(), wide: false };
   /** Dormant frames that got their first child in the current transaction; they fade in after commit. */
   const woken = new Set<string>();
+  /** True while paced ops are still waiting; set once the pacer exists. */
+  let pacing = () => false;
 
   const ids = (nodeId: string): IdFactory => {
     const stamp = `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -243,10 +295,68 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   /** `overlapsBefore` holds block pairs that already overlapped, so settling only fixes clashes this change made. */
   type Tx = { elements: ExcalidrawElement[]; overlapsBefore: Set<string> };
 
+  /** Which user elements could belong to a sketch, as plain parts for groupSketches. */
+  function sketchPartsOf(elements: readonly ExcalidrawElement[]): SketchPart[] {
+    const state = api.getAppState();
+    // The stroke being drawn right now is not finished; it joins once the pen lifts.
+    const drawing = new Set([state.newElement?.id, state.multiElement?.id].filter((id): id is string => id !== undefined));
+    const parts: SketchPart[] = [];
+    for (const el of elements) {
+      if (el.isDeleted || drawing.has(el.id) || readMeta(el) !== null) continue;
+      const hasLabel = (el.boundElements ?? []).some((b) => b.type === "text");
+      let kind: SketchPart["kind"] | null = null;
+      if (el.type === "text") kind = el.containerId === null ? "text" : null;
+      else if (el.type === "freedraw" || el.type === "line") kind = "stroke";
+      // A loose arrow is part of a drawing; one joining two things is a connection.
+      else if (el.type === "arrow") kind = el.startBinding !== null && el.endBinding !== null ? null : "stroke";
+      else if (el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond") kind = hasLabel ? null : "stroke";
+      if (kind === null) continue;
+      const rect = boundsOf([el]);
+      if (rect !== null) parts.push({ id: el.id, kind, rect, updated: el.updated, sketch: sketchIdOf(el) });
+    }
+    return parts;
+  }
+
+  /**
+   * Groups loose user strokes into sketches and stamps each element with its sketch id, so the agent can address
+   * "the thing I drew" by a stable id. Returns the elements with any changed stamps.
+   */
+  function syncSketches(elements: readonly ExcalidrawElement[]): { elements: ExcalidrawElement[]; changed: boolean } {
+    const parts = sketchPartsOf(elements);
+    const taken = new Set<string>();
+    for (const el of elements) {
+      const id = nodeIdOf(readMeta(el)) ?? sketchIdOf(el);
+      if (id !== null && !el.isDeleted) taken.add(id);
+    }
+    let n = 1;
+    const makeId = (): NodeId => {
+      for (;;) {
+        const parsed = NodeId.safeParse(`sketch-${n++}`);
+        if (parsed.success && !taken.has(parsed.data)) {
+          taken.add(parsed.data);
+          return parsed.data;
+        }
+      }
+    };
+    const groups = groupSketches({ parts, makeId });
+    // Anything that carried a sketch id but no longer qualifies (a box that got a label, say) loses it.
+    const want = new Map<string, NodeId | null>(elements.filter((el) => !el.isDeleted && sketchIdOf(el) !== null).map((el) => [el.id, null]));
+    for (const p of parts) want.set(p.id, null);
+    for (const group of groups) for (const id of group.members) want.set(id, group.id);
+    let changed = false;
+    const next = elements.map((el) => {
+      const target = want.get(el.id);
+      if (target === undefined || target === sketchIdOf(el)) return el;
+      changed = true;
+      return newElementWith(el, { customData: withSketchId(el.customData, target) });
+    });
+    return { elements: next, changed };
+  }
+
   function begin(): Tx {
     // Anything still gliding jumps to where it is headed, so the transaction reads final positions.
     animator.finishMotion();
-    const elements = [...dedupeNodeIds(api.getSceneElementsIncludingDeleted())];
+    const elements = syncSketches(dedupeNodeIds(api.getSceneElementsIncludingDeleted())).elements;
     return { elements, overlapsBefore: overlappingPairs(blocksOf(elements).map((b) => b.block)) };
   }
 
@@ -397,6 +507,103 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   type Resolved = { at: Point; frame: { element: ExcalidrawElement } | null };
 
+  const POINTER_STALE_MS = 20_000;
+  const GONE_MS = 20_000;
+
+  /** The user's mouse in scene coordinates, or null when off-canvas, on touch, or still for too long. */
+  function scenePointer(): (Point & { at: number }) | null {
+    if (pointer === null || performance.now() - pointer.at > POINTER_STALE_MS) return null;
+    const state = api.getAppState();
+    const z = state.zoom.value;
+    return { x: (pointer.clientX - state.offsetLeft) / z - state.scrollX, y: (pointer.clientY - state.offsetTop) / z - state.scrollY, at: pointer.at };
+  }
+
+  /** The scene area the user can actually see between the app's chrome; where the camera is headed when it glides. */
+  function viewRect(): Rect {
+    const state = api.getAppState();
+    const insets = chromeInsets(state.width);
+    const gliding = cameraFrame !== null && cameraTarget !== null ? cameraTarget : null;
+    const z = gliding?.z ?? state.zoom.value;
+    const cx = gliding?.cx ?? -state.scrollX + state.width / 2 / z;
+    const cy = gliding?.cy ?? -state.scrollY + state.height / 2 / z;
+    return {
+      x: cx - state.width / 2 / z + insets.left / z,
+      y: cy - state.height / 2 / z + insets.top / z,
+      w: (state.width - insets.left - insets.right) / z,
+      h: (state.height - insets.top - insets.bottom) / z,
+    };
+  }
+
+  function selectionRect(nodes: ReadonlyMap<NodeId, NodeEntry>, exclude: ReadonlySet<string>): Rect | null {
+    const selected = api.getAppState().selectedElementIds;
+    const rects: Rect[] = [];
+    for (const entry of nodes.values()) {
+      if (entry.kind === "edge" || !entry.elements.some((el) => selected[el.id] === true && !exclude.has(el.id))) continue;
+      const r = nodeRect(entry);
+      if (r !== null) rects.push(r);
+    }
+    return union(rects);
+  }
+
+  /** The item the conversation is on: the last thing placed, standing in for its frame when it sits in one. */
+  function anchorRect(tx: Tx, nodes: ReadonlyMap<NodeId, NodeEntry>, exclude: ReadonlySet<string>): Rect | null {
+    const entry = lastPlaced === null ? undefined : nodes.get(lastPlaced);
+    if (entry === undefined || entry.elements.some((el) => exclude.has(el.id))) return null;
+    const frame = entry.root.frameId === null ? undefined : tx.elements.find((el) => el.id === entry.root.frameId && !el.isDeleted);
+    return frame !== undefined ? boundsOf([frame]) : nodeRect(entry);
+  }
+
+  /** A thread of thought: items placed this close together in time go beside each other. */
+  const THREAD_MS = 30_000;
+
+  /**
+   * Where the user's attention is, most specific first: the mouse if it moved since the partner last drew; the item
+   * the conversation is on, if placed a moment ago and still in view; the selection; that item even if older; then
+   * the mouse resting where it was. (Excalidraw leaves the user's last drawing selected, so a selection alone is a
+   * weaker signal than an ongoing thread.)
+   */
+  function attention(tx: Tx, nodes: ReadonlyMap<NodeId, NodeEntry>, exclude: ReadonlySet<string>): { focus: Point | null; anchor: Rect | null } {
+    const view = viewRect();
+    const mouse = scenePointer();
+    if (mouse !== null && mouse.at > lastPlacedAt) return { focus: mouse, anchor: null };
+    const anchor = anchorRect(tx, nodes, exclude);
+    const anchorInView = anchor !== null && overlaps(anchor, view) ? anchor : null;
+    if (anchorInView !== null && performance.now() - lastPlacedAt < THREAD_MS) return { focus: mouse ?? center(anchorInView), anchor: anchorInView };
+    const selected = selectionRect(nodes, exclude);
+    if (selected !== null) return { focus: center(selected), anchor: selected };
+    if (anchorInView !== null) return { focus: mouse ?? center(anchorInView), anchor: anchorInView };
+    return { focus: mouse, anchor: null };
+  }
+
+  function recentlyGone(id: NodeId): { rect: Rect; frameId: string | null } | null {
+    const g = gone.get(id);
+    if (g === undefined) return null;
+    if (performance.now() - g.at > GONE_MS) {
+      gone.delete(id);
+      return null;
+    }
+    return g;
+  }
+
+  /** A live frame (not a dormant one) by element id. */
+  function liveFrame(tx: Tx, frameId: string | null): ExcalidrawElement | undefined {
+    if (frameId === null) return undefined;
+    return tx.elements.find((el) => el.id === frameId && !el.isDeleted && (el.type === "frame" || el.type === "magicframe"));
+  }
+
+  /** The top-level block a node belongs to (its frame, its diagram, or itself). */
+  function blockKeyOf(tx: Tx, id: NodeId): string | null {
+    return blocksOf(tx.elements).find((b) => b.nodeIds.includes(id))?.block.key ?? null;
+  }
+
+  /** A node placed `at` another one is meant to sit on it; settling must not push it off. */
+  function allowOverlap(tx: Tx, placed: NodeId, placement: Placement) {
+    if (placement.kind !== "at") return;
+    const a = blockKeyOf(tx, placed);
+    const b = blockKeyOf(tx, placement.target);
+    if (a !== null && b !== null && a !== b) tx.overlapsBefore.add(pairKey(a, b));
+  }
+
   /** Picks a top-left position for a node of `size`; `exclude` holds the node's own elements when moving. */
   function resolve(tx: Tx, placement: Placement, size: { w: number; h: number }, exclude: ReadonlySet<string>): Resolved {
     const nodes = indexNodes(tx.elements);
@@ -431,21 +638,44 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         }
         return { at: placeNear({ size, target: rect, direction: placement.direction, obstacles: obstacles(tx, exclude) }), frame: null };
       }
+      case "at_pointer": {
+        const mouse = scenePointer();
+        if (mouse === null) return resolve(tx, { kind: "auto" }, size, exclude);
+        // Pointing into a frame puts the new item in that frame, at the spot.
+        const frame = [...nodes.values()].find((n) => {
+          const r = n.kind === "frame" && !isDormantFrame(n.root) ? boundsOf([n.root]) : null;
+          return r !== null && !exclude.has(n.root.id) && contains(r, { x: mouse.x, y: mouse.y, w: 0, h: 0 });
+        });
+        if (frame !== undefined) {
+          const at = placeAtPoint({ size, point: mouse, obstacles: frameChildren(tx, frame.root.id, exclude) });
+          return { at, frame: { element: frame.root } };
+        }
+        return { at: placeAtPoint({ size, point: mouse, obstacles: obstacles(tx, exclude) }), frame: null };
+      }
+      case "at": {
+        const target = nodes.get(placement.target);
+        const live = target === undefined || target.elements.some((el) => exclude.has(el.id)) ? null : nodeRect(target);
+        const remembered = live === null ? recentlyGone(placement.target) : null;
+        const rect = live ?? remembered?.rect ?? null;
+        if (rect === null) return resolve(tx, { kind: "auto" }, size, exclude);
+        const frameId = target !== undefined && target.diagram === null ? target.root.frameId : (remembered?.frameId ?? null);
+        const frame = liveFrame(tx, frameId);
+        return { at: placeOver({ size, target: rect }), frame: frame === undefined ? null : { element: frame } };
+      }
       case "auto": {
-        const anchorEntry = lastPlaced === null ? undefined : nodes.get(lastPlaced);
-        // Something placed inside a frame anchors by its frame, so new blocks go beside the frame, not into it.
-        const anchorFrame =
-          anchorEntry === undefined || anchorEntry.root.frameId === null
-            ? undefined
-            : tx.elements.find((el) => el.id === anchorEntry.root.frameId && !el.isDeleted);
-        const anchorRect = anchorFrame !== undefined ? boundsOf([anchorFrame]) : anchorEntry === undefined ? null : nodeRect(anchorEntry);
         const blocked = obstacles(tx, exclude);
         const content = union(blocked);
-        if (anchorRect === null || content === null) {
+        const { focus, anchor } = attention(tx, nodes, exclude);
+        // Where the user is looking first: beside what the conversation is on, or near the mouse, inside the view.
+        const inView = placeInView({ size, view: viewRect(), focus: focus ?? startPoint(size), anchor, obstacles: blocked });
+        if (inView !== null) return { at: inView, frame: null };
+        // The view is full: grow the board the old way, beside the last thing or in a new row.
+        const last = anchorRect(tx, nodes, exclude);
+        if (last === null || content === null) {
           return { at: placeAuto({ size, anchor: null, viewportCenter: startPoint(size), obstacles: blocked }), frame: null };
         }
         // Beside the last thing, or a new row under everything: whichever keeps the whole board larger on screen.
-        const beside = placeAuto({ size, anchor: anchorRect, viewportCenter: startPoint(size), obstacles: blocked });
+        const beside = placeAuto({ size, anchor: last, viewportCenter: startPoint(size), obstacles: blocked });
         const row = nearestFree({ size, preferred: { x: content.x, y: content.y + content.h + ROW_GAP }, obstacles: blocked });
         const zoomWith = (at: Point) => fitZoom(union([content, { ...at, ...size }]) ?? content);
         return { at: zoomWith(row) > zoomWith(beside) * 1.05 ? row : beside, frame: null };
@@ -834,7 +1064,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     for (const el of core) pendingFollow.core.add(el.id);
     for (const id of context) pendingFollow.context.add(id);
     if (followTimer !== null) window.clearTimeout(followTimer);
-    followTimer = window.setTimeout(follow, 140);
+    // While a burst is still landing, wait a little longer and take in several new items per camera move.
+    followTimer = window.setTimeout(follow, pacing() ? 420 : 140);
   }
 
   function announce(placed: readonly ExcalidrawElement[], stagger: "together" | "sequence", context: readonly string[] = []) {
@@ -856,6 +1087,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   type Camera = { cx: number; cy: number; z: number };
   let cameraFrame: number | null = null;
+  /** Elements placed earlier in the burst still landing. */
+  const burstSeen = new Set<string>();
   let cameraTarget: Camera | null = null;
 
   /**
@@ -870,6 +1103,10 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const scene = animator.finalGeometry(api.getSceneElements());
     const core = scene.filter((el) => pendingFollow.core.has(el.id));
     const context = scene.filter((el) => pendingFollow.context.has(el.id));
+    // Earlier items of the same burst: the camera tries to show the whole group, not just the newest.
+    const burst = scene.filter((el) => burstSeen.has(el.id) && !pendingFollow.core.has(el.id));
+    for (const el of core) burstSeen.add(el.id);
+    if (!pacing()) burstSeen.clear();
     const wide = pendingFollow.wide;
     pendingFollow.core.clear();
     pendingFollow.context.clear();
@@ -905,7 +1142,13 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       contextRect === null ? null : union([itemRect, contextRect]),
       union([itemRect, ...frames]),
     ];
-    const rect = options.find((r): r is Rect => r !== null && fitsAt(r) >= limits.min) ?? itemRect;
+    // A burst is one thought, so it may zoom out as far as the floor to stay in view together.
+    const burstRect = boundsOf(burst);
+    const together = burstRect === null ? null : union([itemRect, burstRect, ...frames]);
+    const rect =
+      (together !== null && fitsAt(together) >= limits.floor ? together : undefined) ??
+      options.find((r): r is Rect => r !== null && fitsAt(r) >= limits.min) ??
+      itemRect;
 
     const zoom = base.z;
     const margin = limits.margin / zoom;
@@ -1010,7 +1253,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       const root = existing.root;
       patch(tx, root.id, (el) => renamedFrame(el, op.title));
       commit(tx);
-      lastPlaced = op.id;
+      noteActivity(op.id);
       return;
     }
     // Re-adding an id replaces the node in place: same top-left, same frame, edges re-attach in finishAdd.
@@ -1079,6 +1322,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     }
     if (placement.kind === "near" && placement.target === op.id) placement = { kind: "auto" };
     const placed = keep === null ? place(tx, built, placement) : placeAt(tx, built, keep);
+    if (keep === null) allowOverlap(tx, op.id, placement);
     if (keep !== null && keep.frameId !== null) settleInside(tx, keep.frameId, op.id);
     finishAdd(tx, op.id, placed, existing !== undefined);
   }
@@ -1094,7 +1338,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     if (!replaced) markPlaced(nodeId);
     else if (!placedOrder.has(nodeId)) placedOrder.set(nodeId, -2e6);
     commit(tx);
-    lastPlaced = nodeId;
+    noteActivity(nodeId);
     // A dormant frame has nothing to show yet; its first child announces it.
     if (placed.every(isDormantFrame)) return;
     const isMockup = placed.some((el) => readMeta(el)?.kind === "mockup");
@@ -1137,6 +1381,13 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       playEntry(laid);
       // A longer label can grow the diagram past the screen edge; keep the whole of it in view.
       scheduleFollow(api.getSceneElements().filter((el) => laid.elementIds.has(el.id)), [], true);
+      return;
+    }
+
+    if (entry.kind === "sketch") {
+      updateSketch(tx, entry, op);
+      commit(tx);
+      announce(pendingAnnounce.splice(0), "together");
       return;
     }
 
@@ -1194,6 +1445,33 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     commit(tx);
   }
 
+  /** Elements an update created outside the usual add path (a sketch's new label); announced after commit. */
+  const pendingAnnounce: ExcalidrawElement[] = [];
+
+  /** Recolors a user's sketch, or writes its label: over the old words if it has some, else just under it. */
+  function updateSketch(tx: Tx, entry: NodeEntry, op: Extract<BoardOp, { op: "update" }>) {
+    if (op.color !== undefined) {
+      const stroke = SWATCHES[op.color].stroke;
+      for (const el of entry.elements) if (el.type !== "text") patch(tx, el.id, (current) => newElementWith(current, { strokeColor: stroke }));
+    }
+    if (op.label === undefined) return;
+    const label = op.label;
+    const texts = entry.elements.filter((el) => el.type === "text" && el.containerId === null).sort((a, b) => a.y - b.y || a.x - b.x);
+    const [first, ...rest] = texts;
+    if (first !== undefined) {
+      patch(tx, first.id, (el) => retext(el, label));
+      remove(tx, new Set(rest.map((el) => el.id)));
+      return;
+    }
+    const rect = nodeRect(entry);
+    if (rect === null) return;
+    const [text] = convertToExcalidrawElements([{ type: "text", x: 0, y: 0, text: label, fontSize: 20, fontFamily: 5, strokeColor: entry.root.strokeColor }]);
+    if (text === undefined) return;
+    const placed = { ...text, x: rect.x + rect.w / 2 - text.width / 2, y: rect.y + rect.h + 8, frameId: entry.root.frameId, customData: withSketchId(undefined, entry.id) };
+    insert(tx, [placed], null);
+    pendingAnnounce.push(placed);
+  }
+
   function move(op: Extract<BoardOp, { op: "move" }>) {
     const tx = begin();
     const nodes = indexNodes(tx.elements);
@@ -1231,8 +1509,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     reroute(tx, touched);
     // A moved block counts as the newest, so it is the one that steps aside if it lands on something.
     markPlaced(entry.id);
+    allowOverlap(tx, entry.id, placement);
     commit(tx);
-    lastPlaced = entry.id;
+    noteActivity(entry.id);
     const placed = tx.elements.filter((el) => own.has(el.id));
     const bounds = boundsOf(placed);
     if (bounds !== null) animator.pointAt(restingPoint(bounds), []);
@@ -1479,9 +1758,10 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       }
     }
     const laid = layDiagram(tx, op.id, spec, where);
+    if (where.kind === "place") allowOverlap(tx, op.id, op.placement);
     const transforming = laid.revived.length > 0 || existing !== undefined;
     commit(tx, "undoable", { ghosts: true, revived: laid.revived, glideMs: transforming ? 560 : undefined });
-    lastPlaced = op.id;
+    noteActivity(op.id);
     playEntry(laid);
     const placed = api.getSceneElements().filter((el) => laid.elementIds.has(el.id));
     const rect = boundsOf(animator.finalGeometry(placed));
@@ -1532,6 +1812,12 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         const doomed = deletionSet(tx, op.ids);
         if (doomed.size === 0) return;
         rememberDeparted(nodes, doomed);
+        const now = performance.now();
+        for (const entry of nodes.values()) {
+          if (entry.kind === "edge" || !entry.elements.some((el) => doomed.has(el.id))) continue;
+          const rect = nodeRect(entry);
+          if (rect !== null) gone.set(entry.id, { rect, frameId: entry.root.frameId, at: now });
+        }
         // Frames emptied by this delete (a refine moving their contents into a diagram) go too, not linger empty.
         const touchedFrames = new Set<string>();
         for (const el of tx.elements) if (doomed.has(el.id) && el.frameId !== null) touchedFrames.add(el.frameId);
@@ -1568,8 +1854,37 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   // ---- Summary ------------------------------------------------------------------------------
 
+  /** Scene rect rounded to whole units, as the summary reports it. */
+  function rounded(r: Rect): Rect {
+    return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) };
+  }
+
+  /** Pointer reach for "nearest item", in scene units: about 160 screen pixels. */
+  const OVER_REACH_PX = 160;
+
+  /** The item under the mouse (the smallest one containing it), else the nearest within reach. */
+  function itemAt(point: Point, items: readonly BoardItem[]): NodeId | null {
+    const candidates = items.filter((item) => item.kind !== "edge" && item.kind !== "diagram");
+    const hit = (r: Rect) => point.x >= r.x && point.x <= r.x + r.w && point.y >= r.y && point.y <= r.y + r.h;
+    const under = candidates.filter((item) => hit(item.bounds)).sort((a, b) => a.bounds.w * a.bounds.h - b.bounds.w * b.bounds.h)[0];
+    if (under !== undefined) return under.id;
+    const reach = OVER_REACH_PX / api.getAppState().zoom.value;
+    const gap = (r: Rect) => Math.hypot(Math.max(r.x - point.x, 0, point.x - (r.x + r.w)), Math.max(r.y - point.y, 0, point.y - (r.y + r.h)));
+    const near = candidates
+      .filter((item) => item.kind !== "frame")
+      .map((item) => ({ id: item.id, d: gap(item.bounds) }))
+      .filter((c) => c.d <= reach)
+      .sort((a, b) => a.d - b.d)[0];
+    return near?.id ?? null;
+  }
+
   function getSummary(): BoardSummary {
-    const elements = dedupeNodeIds(api.getSceneElementsIncludingDeleted());
+    const synced = syncSketches(dedupeNodeIds(api.getSceneElementsIncludingDeleted()));
+    const state = api.getAppState();
+    const busy = state.newElement !== null || state.selectedElementsAreBeingDragged || state.isResizing || state.isRotating || state.editingTextElement !== null;
+    // Store the sketch ids so they stay stable, unless the user is mid-gesture (the next summary stores them).
+    if (synced.changed && !busy) api.updateScene({ elements: synced.elements, captureUpdate: CaptureUpdateAction.NEVER });
+    const elements = synced.elements;
     const nodes = indexNodes(elements);
     const byId = new Map(elements.map((el) => [el.id, el]));
     const nodeOfElement = new Map<string, NodeId>();
@@ -1579,31 +1894,41 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     for (const entry of nodes.values()) {
       const label = labelOf(entry, byId).trim();
       const frame = entry.root.frameId === null ? null : (nodeOfElement.get(entry.root.frameId) ?? null);
+      const origin = entry.meta === null ? "user" : "agent";
+      const rect = entry.kind === "edge" ? boundsOf(entry.elements) : nodeRect(entry);
+      if (rect === null) continue;
+      const bounds = rounded(rect);
       if (entry.kind === "edge") {
         const meta = entry.meta;
         const arrow = entry.root;
         const from = meta !== null && meta.kind === "edge" ? meta.from : arrow.type === "arrow" ? (nodeOfElement.get(arrow.startBinding?.elementId ?? "") ?? null) : null;
         const to = meta !== null && meta.kind === "edge" ? meta.to : arrow.type === "arrow" ? (nodeOfElement.get(arrow.endBinding?.elementId ?? "") ?? null) : null;
         if (from === null || to === null || !nodes.has(from) || !nodes.has(to)) continue;
-        items.push({ id: entry.id, kind: "edge", label, frame, link: `${from} -> ${to}` });
+        items.push({ id: entry.id, kind: "edge", origin, bounds, label, frame, link: `${from} -> ${to}` });
         continue;
       }
-      // User shapes only matter to the agent when they say something.
-      if (entry.meta === null && entry.kind === "shape" && label.length === 0) continue;
       // Diagram nodes are shapes inside their diagram, so the agent can update, link or delete them one by one.
       if (entry.kind === "member") {
-        items.push({ id: entry.id, kind: "shape", label, frame: entry.diagram, link: "" });
+        items.push({ id: entry.id, kind: "shape", origin, bounds, label, frame: entry.diagram, link: "" });
         continue;
       }
-      items.push({ id: entry.id, kind: entry.kind, label, frame, link: "" });
+      items.push({ id: entry.id, kind: entry.kind, origin, bounds, label, frame, link: "" });
     }
 
     const selected = new Set<NodeId>();
-    for (const elementId of Object.keys(api.getAppState().selectedElementIds)) {
+    for (const elementId of Object.keys(state.selectedElementIds)) {
       const id = nodeOfElement.get(elementId);
       if (id !== undefined) selected.add(id);
     }
-    return { title, items: items.slice(0, 400), selection: [...selected] };
+    const kept = items.slice(0, 400);
+    const mouse = scenePointer();
+    return {
+      title,
+      items: kept,
+      selection: [...selected],
+      pointer: mouse === null ? null : { x: Math.round(mouse.x), y: Math.round(mouse.y), over: itemAt(mouse, kept) },
+      viewport: rounded(viewRect()),
+    };
   }
 
   // ---- Pending ------------------------------------------------------------------------------
@@ -1652,11 +1977,66 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       }
     };
 
+  // ---- Pacing and the partner's cursor ---------------------------------------------------------
+
+  const runSafely = guard((task: PacedTask) => {
+    if (task.kind === "op") apply(task.op);
+    else task.run();
+  }, undefined);
+  const pacer = createPacer({
+    run: runSafely,
+    schedule: (fn, ms) => window.setTimeout(fn, ms),
+    cancel: (handle) => window.clearTimeout(handle),
+    now: () => performance.now(),
+  });
+  pacing = () => pacer.waiting() > 0;
+
+  let activity: PartnerActivity = { kind: "idle" };
+
+  /** Where the partner will most likely draw next: the user's focus, else beside the last thing, else mid-view. */
+  function likelySpot(): Point {
+    const elements = api.getSceneElements();
+    const tx: Tx = { elements: [...elements], overlapsBefore: new Set() };
+    const nodes = indexNodes(elements);
+    const { focus, anchor } = attention(tx, nodes, new Set());
+    if (focus !== null) return focus;
+    if (anchor !== null) return { x: anchor.x + anchor.w + 60, y: anchor.y + anchor.h / 2 };
+    return center(viewRect());
+  }
+
+  function setPartner(next: PartnerActivity) {
+    const prev = activity;
+    activity = next;
+    switch (next.kind) {
+      case "idle":
+        animator.setStatus(null);
+        return;
+      case "thinking":
+        animator.setStatus("…");
+        // A new phrase: glide toward where it will land right away, so silence never reads as being ignored.
+        if (prev.kind !== "thinking" || prev.key !== next.key) animator.anticipate(likelySpot());
+        return;
+      case "tidying":
+        animator.setStatus("· tidying up…");
+        if (prev.kind !== "tidying") animator.anticipate(likelySpot());
+        return;
+      default: {
+        const _exhaustive: never = next;
+        return _exhaustive;
+      }
+    }
+  }
+
   return {
-    apply: guard(apply, undefined),
-    getSummary: guard(getSummary, { title: DEFAULT_TITLE, items: [], selection: [] }),
+    apply: (op) => pacer.push({ kind: "op", op }),
+    getSummary: guard(getSummary, { title: DEFAULT_TITLE, items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 0, h: 0 } }),
     showPending: guard(showPending, undefined),
-    clearPending: guard(clearPending, undefined),
+    // Behind any ops still waiting, so an image lands in its card before the card goes.
+    clearPending: (id) => pacer.push({ kind: "task", run: () => clearPending(id) }),
+    trackPointer(sample) {
+      pointer = sample === null ? null : { ...sample, at: performance.now() };
+    },
+    setPartner: guard(setPartner, undefined),
     getTitle: () => title,
     setTitle: guard(setTitle, undefined),
     subscribeTitle(listener) {
@@ -1664,6 +2044,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       return () => titleListeners.delete(listener);
     },
     dispose() {
+      pacer.dispose();
       if (cameraFrame !== null) cancelAnimationFrame(cameraFrame);
       animator.dispose();
       if (followTimer !== null) window.clearTimeout(followTimer);

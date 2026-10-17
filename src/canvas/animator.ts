@@ -89,6 +89,8 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
   const exits = new Map<string, Exit>();
   let ghostSeq = 0;
   let cursor: CursorState | null = null;
+  /** Shown beside the partner's name ("…", "Tidying up…"). While set, the cursor stays instead of fading away. */
+  let status: string | null = null;
   let frame: number | null = null;
   const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -272,7 +274,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
 
   function renderCursor(now: number) {
     if (cursor === null || !isSocketId(PARTNER_SOCKET)) return;
-    if (now - cursor.lastMove > CURSOR_LINGER_MS) {
+    if (status === null && now - cursor.lastMove > CURSOR_LINGER_MS) {
       cursor = null;
       api.updateScene({ collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER });
       return;
@@ -283,7 +285,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     const y = cursor.from.y + (cursor.to.y - cursor.from.y) * k;
     const partner: Collaborator = {
       id: PARTNER_ID,
-      username: "Partner",
+      username: status === null ? "Partner" : `Partner ${status}`,
       color: PARTNER_COLOR,
       pointer: { x, y, tool: "pointer" },
       // The outline shows once the cursor lands and clears after a beat, so it marks what is new without lingering.
@@ -332,6 +334,29 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     schedule();
   }
 
+  /** Glides the cursor toward where the next drawing will likely land, before anything is drawn. */
+  function anticipate(to: Point) {
+    const now = performance.now();
+    if (cursor !== null) {
+      const at = currentCursor(now);
+      // Already there or close: stay put rather than twitch.
+      if (Math.hypot(at.x - to.x, at.y - to.y) < 24) {
+        cursor = { ...cursor, lastMove: now };
+        schedule();
+        return;
+      }
+    }
+    pointAt(to, []);
+  }
+
+  /** Sets or clears the label beside the cursor. Clearing lets an idle cursor fade after the usual linger. */
+  function setStatus(next: string | null) {
+    if (next === status) return;
+    status = next;
+    if (cursor !== null) cursor = { ...cursor, lastMove: performance.now() };
+    schedule();
+  }
+
   function currentCursor(now: number): Point {
     if (cursor === null) return { x: 0, y: 0 };
     const k = easeInOut(Math.min(1, (now - cursor.start) / CURSOR_MS));
@@ -346,7 +371,8 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     glides.clear();
     exits.clear();
     cursor = null;
+    status = null;
   }
 
-  return { fadeIn, pulse, stopPulse, pointAt, glideFrom, enter, fadeOutCopies, dropGhosts, finishMotion, finalGeometry, dispose };
+  return { anticipate, setStatus, fadeIn, pulse, stopPulse, pointAt, glideFrom, enter, fadeOutCopies, dropGhosts, finishMotion, finalGeometry, dispose };
 }

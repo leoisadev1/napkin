@@ -1,7 +1,7 @@
 // Auto-layout: turn a semantic Placement into a top-left position that does not collide with the board.
 import type { Direction } from "../../shared/board";
 import type { Point, Rect } from "./geometry";
-import { center, inflate, overlaps, union } from "./geometry";
+import { center, contains, inflate, overlaps, union } from "./geometry";
 
 /** Room between neighbors; wide enough that a labeled arrow between them stays readable. */
 const GAP = 120;
@@ -61,6 +61,64 @@ export function placeAuto(args: { size: Size; anchor: Rect | null; viewportCente
           y: Math.max(anchor.h, size.h) > 200 ? anchor.y : anchor.y + anchor.h / 2 - size.h / 2,
         };
   return nearestFree({ size, preferred, obstacles });
+}
+
+/** Like nearestFree, but only accepts spots fully inside `view`. Null when the view has no room. */
+export function nearestFreeWithin(args: { size: Size; preferred: Point; view: Rect; obstacles: readonly Rect[] }): Point | null {
+  const { size, view, obstacles } = args;
+  if (size.w > view.w || size.h > view.h) return null;
+  const clampX = (x: number) => Math.min(Math.max(x, view.x), view.x + view.w - size.w);
+  const clampY = (y: number) => Math.min(Math.max(y, view.y), view.y + view.h - size.h);
+  const preferred = { x: clampX(args.preferred.x), y: clampY(args.preferred.y) };
+  const fits = (p: Point) => !collides({ x: p.x, y: p.y, w: size.w, h: size.h }, obstacles, MARGIN);
+  if (fits(preferred)) return preferred;
+  const step = 24;
+  const rings = Math.ceil(Math.max(view.w, view.h) / step);
+  for (let ring = 1; ring <= rings; ring++) {
+    const candidates: Point[] = [];
+    for (let i = -ring; i <= ring; i++) {
+      candidates.push({ x: preferred.x + i * step, y: preferred.y - ring * step }, { x: preferred.x + i * step, y: preferred.y + ring * step });
+      if (i !== -ring && i !== ring) {
+        candidates.push({ x: preferred.x - ring * step, y: preferred.y + i * step }, { x: preferred.x + ring * step, y: preferred.y + i * step });
+      }
+    }
+    const inside = candidates.filter((p) => p.x >= view.x && p.y >= view.y && p.x + size.w <= view.x + view.w && p.y + size.h <= view.y + view.h);
+    inside.sort((a, b) => Math.hypot(a.x - preferred.x, a.y - preferred.y) - Math.hypot(b.x - preferred.x, b.y - preferred.y));
+    const hit = inside.find(fits);
+    if (hit !== undefined) return hit;
+  }
+  return null;
+}
+
+/** Centered on a point (the user's mouse), nudged to the nearest free space. */
+export function placeAtPoint(args: { size: Size; point: Point; obstacles: readonly Rect[] }): Point {
+  const { size, point, obstacles } = args;
+  return nearestFree({ size, preferred: { x: point.x - size.w / 2, y: point.y - size.h / 2 }, obstacles });
+}
+
+/** Top-left that centers `size` on `target`: a clean shape taking the place of the sketch it replaces. */
+export function placeOver(args: { size: Size; target: Rect }): Point {
+  const c = center(args.target);
+  return { x: c.x - args.size.w / 2, y: c.y - args.size.h / 2 };
+}
+
+/**
+ * Free space where the user is looking. With an `anchor` (the item the conversation is on, still in view) the new
+ * item goes beside it, right then below then left then above, as long as that spot is in view. Otherwise the free
+ * spot nearest `focus` (the mouse, the selection, or the middle of the screen). Null when the view is full.
+ */
+export function placeInView(args: { size: Size; view: Rect; focus: Point; anchor: Rect | null; obstacles: readonly Rect[] }): Point | null {
+  const { size, view, focus, anchor, obstacles } = args;
+  const inView = (p: Point) => contains(view, { x: p.x, y: p.y, w: size.w, h: size.h });
+  if (anchor !== null && overlaps(anchor, view)) {
+    for (const direction of ["right", "below", "left", "above"] as const) {
+      const p = placeNear({ size, target: anchor, direction, obstacles });
+      // Beside means beside: a spot the nudging pushed far away is no better than one near the focus.
+      const far = Math.hypot(center({ ...p, ...size }).x - center(anchor).x, center({ ...p, ...size }).y - center(anchor).y);
+      if (inView(p) && far < Math.max(anchor.w, anchor.h, size.w, size.h) * 2 + GAP * 2) return p;
+    }
+  }
+  return nearestFreeWithin({ size, preferred: { x: focus.x - size.w / 2, y: focus.y - size.h / 2 }, view, obstacles });
 }
 
 /** The spot directly beside a target, before any collision handling. */
