@@ -8,7 +8,8 @@ const Config = z.object({
   GRADIUM_API_KEY: z.string().default(''),
   DEV_LLM_BASE_URL: z.url().optional(),
   DEV_LLM_API_KEY: z.string().default('dev-only'),
-  DEV_LLM_MODEL: z.string().default('gpt-6-luna'),
+  DEV_LLM_MODEL: z.string().default('gpt-6.1-sol'),
+  DEV_LLM_REASONING_EFFORT: z.enum(['none', 'minimal', 'low']).default('none'),
   DEV_IMAGE_MODEL: z.string().default('gpt-image-1'),
   /** Extra browser origins allowed to call the API, comma separated. Needed behind an HTTPS proxy such as Tailscale Serve. */
   ALLOWED_ORIGINS: z.string().default('').transform(value => value.split(',').map(origin => origin.trim()).filter(Boolean)),

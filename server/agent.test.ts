@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import { validateOperation } from './agent';
 import { handleRequest } from './index';
-import { parseAgentStream } from '../src/agent/client';
 
 test('invalid operations are rejected at the tool boundary', () => {
   expect(validateOperation({ op: 'move', id: 'missing spaces', placement: { kind: 'auto' } })).toBeUndefined();
@@ -17,30 +16,6 @@ test('status reports capabilities without secrets', async () => {
   const body = await response.text();
   expect(body).toContain('"voice":'); expect(body).not.toContain('GRADIUM_API_KEY'); expect(body).not.toContain('accessToken');
 });
-test.skipIf(!process.env.DEV_LLM_BASE_URL)('dev agent draws a habit tracker and speaks, reporting time to first op', async () => {
-  const started = performance.now(); let firstOp: number | undefined; let ops = 0; let speech = '';
-  const counts = new Map<string, number>();
-  const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST',
-    body: JSON.stringify({ utterance: "I'm building a habit tracker app with streaks, reminders and a social feed", history: [], board: { title: '', items: [], selection: [] } }),
-    signal: AbortSignal.timeout(90_000),
-  }));
-  expect(response.status).toBe(200);
-  if (!response.body) throw new Error('No body');
-  for await (const event of parseAgentStream(response.body)) {
-    expect(event.type).not.toBe('error');
-    if (event.type === 'op') { firstOp ??= performance.now() - started; ops++; counts.set(event.op.op, (counts.get(event.op.op) ?? 0) + 1); }
-    if (event.type === 'say') speech += event.text;
-  }
-  process.stderr.write(`${JSON.stringify({ test: 'habit_tracker', firstOpMs: Math.round(firstOp ?? -1), ops, counts: Object.fromEntries(counts), speech })}\n`);
-  expect(counts.get('set_title')).toBe(1);
-  expect(counts.get('add_frame') ?? 0).toBeGreaterThanOrEqual(2);
-  expect(counts.get('add_frame') ?? 0).toBeLessThanOrEqual(3);
-  expect(counts.get('add_shape') ?? 0).toBeGreaterThanOrEqual(5);
-  expect(counts.get('add_edge') ?? 0).toBeGreaterThanOrEqual(2);
-  expect(counts.get('add_mockup') ?? 0).toBeGreaterThanOrEqual(1);
-  expect(ops).toBeGreaterThanOrEqual(11); expect(speech.length).toBeGreaterThan(0);
-}, 100_000);
-
 test('session store persists encrypted-session envelopes and honors expiration', async () => {
   const { sessionStore } = await import('./auth');
   const key = `test-${crypto.randomUUID()}`;

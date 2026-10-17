@@ -49,3 +49,9 @@ for (const mode of ['healthy', 'rapid']) {
     expect(error).toBe(''); expect(exit).toBe(0);
   }, 10000);
 }
+
+test('STT commits live segments exactly once and interrupt discards late words through flush acknowledgement', async () => {
+  const child = Bun.spawn(['bun', 'server/fixtures/stt-phrases.ts'], { stdout: 'pipe', stderr: 'pipe' });
+  const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  expect(error).toBe(''); expect(exit).toBe(0);
+}, 5000);

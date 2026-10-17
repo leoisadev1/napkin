@@ -23,7 +23,7 @@ for (const optIn of [undefined, '0', '1']) {
       expect(token.status).toBe(enabled ? 200 : 401); expect(tokenCalls).toBe(enabled ? 1 : 0);
       if (enabled) expect((await selectProvider(new Request('http://test'))).modelId).toBe(config().DEV_LLM_MODEL);
       else {
-        const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ utterance: 'Draw', history: [], board: { title: '', items: [], selection: [] } }) }));
+        const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body: JSON.stringify({ mode: 'turn', utterance: 'Draw', history: [], board: { title: '', items: [], selection: [] } }) }));
         if (!response.body) throw new Error('No response body');
         const events = [];
         for await (const event of parseAgentStream(response.body)) events.push(event);

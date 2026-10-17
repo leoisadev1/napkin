@@ -9,5 +9,5 @@ export function useConversation(bridge: BoardBridge): Conversation {
     return () => { abort.abort(); engine.stopVoice(); };
   }, [engine]);
   return { ...snapshot, subscribeLevel: engine.subscribeLevel, subscribeOutputLevel: engine.subscribeOutputLevel,
-    startVoice: engine.startVoice, stopVoice: engine.stopVoice, sendText: engine.sendText, interrupt: engine.interrupt };
+    startVoice: engine.startVoice, stopVoice: engine.stopVoice, sendText: engine.sendText, pickSuggestion: engine.pickSuggestion, interrupt: engine.interrupt };
 }

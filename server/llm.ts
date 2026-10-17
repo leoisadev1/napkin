@@ -6,7 +6,7 @@ import { config } from './config';
 import { imageClient } from './chatgpt-images';
 
 export function chooseModel(models: string[]) {
-  return models.find(model => /mini|spark|luna|nano/i.test(model)) ?? models[0];
+  return ['spark', 'nano', 'mini', 'luna'].map(name => models.find(model => model.toLowerCase().includes(name))).find(Boolean) ?? models[0];
 }
 export async function selectProvider(request: Request) {
   const session = await auth.getSession(request);
@@ -27,7 +27,15 @@ export async function selectProvider(request: Request) {
   }
   const env = config();
   if (!env.DEV_LLM_BASE_URL) throw new Error('Sign in with ChatGPT to start');
-  const provider = createOpenAI({ baseURL: env.DEV_LLM_BASE_URL, apiKey: env.DEV_LLM_API_KEY });
+  const provider = createOpenAI({ baseURL: env.DEV_LLM_BASE_URL, apiKey: env.DEV_LLM_API_KEY,
+    // Proxy aliases evolve faster than the SDK's model capability table. Send the requested
+    // effort at the HTTP boundary so benchmarks measure it instead of an SDK fallback.
+    fetch: Object.assign(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      if (typeof init?.body !== 'string') return fetch(url, init);
+      const body = z.record(z.string(), z.unknown()).parse(JSON.parse(init.body));
+      return fetch(url, { ...init, body: JSON.stringify({ ...body, reasoning_effort: env.DEV_LLM_REASONING_EFFORT }) });
+    }, { preconnect: fetch.preconnect }),
+  });
   return { model: provider.chat(env.DEV_LLM_MODEL), modelId: env.DEV_LLM_MODEL, image: async (prompt: string, signal: AbortSignal) => {
     const response = await fetch(`${env.DEV_LLM_BASE_URL?.replace(/\/$/, '')}/images/generations`, {
       method: 'POST', signal, headers: { 'content-type': 'application/json', authorization: `Bearer ${env.DEV_LLM_API_KEY}` },

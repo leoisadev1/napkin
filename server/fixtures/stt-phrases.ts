@@ -1,0 +1,23 @@
+import { expect, mock } from 'bun:test';
+import type { openVoiceSocket } from '../../src/voice/socket';
+let callbacks: Parameters<typeof openVoiceSocket>[0] | undefined;
+const sent: string[] = [];
+mock.module('../../src/voice/socket', () => ({ openVoiceSocket: async (args: Parameters<typeof openVoiceSocket>[0]) => {
+  callbacks = args;
+  return { readyState: WebSocket.OPEN, bufferedAmount: 0, send(message: string) { sent.push(message); }, close() {} };
+} }));
+const phrases: string[] = []; const turns: string[] = [];
+const { SpeechToText } = await import('../../src/voice/stt');
+const stt = new SpeechToText({ onPartial() {}, onPhrase: text => phrases.push(text), onTurn: text => turns.push(text), onError: error => { throw error; } });
+await stt.connect();
+const text = (value: string) => callbacks?.onMessage({ type: 'text', text: value });
+const segment = () => callbacks?.onMessage({ type: 'end_text' });
+text('a tracker,'); segment(); expect(phrases).toEqual(['a tracker,']);
+text('with streaks'); callbacks?.onMessage({ type: 'step', vad: [{ inactivity_prob: 0.9 }] }); expect(phrases).toEqual(['a tracker,', 'with streaks']);
+for (let i = 0; i < 3; i++) callbacks?.onMessage({ type: 'step', vad: [{ inactivity_prob: 0.9 }] });
+text('and reminders'); callbacks?.onMessage({ type: 'flushed', flush_id: 1 });
+expect(phrases).toEqual(['a tracker,', 'with streaks', 'and reminders']); expect(turns).toHaveLength(1);
+text('these words must be canceled before their timer'); stt.resetPhrases(); text('old late words.'); segment();
+callbacks?.onMessage({ type: 'flushed', flush_id: 2 }); expect(phrases).toHaveLength(3);
+text('new speech.'); segment(); expect(phrases.at(-1)).toBe('new speech.');
+await Bun.sleep(380); expect(phrases).toHaveLength(4); expect(sent).toHaveLength(2); stt.stop();

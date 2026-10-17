@@ -8,7 +8,7 @@ async function token() {
   if (!response.ok) throw new Error(`Token mint failed: ${response.status}`);
   return z.object({ token: z.string().min(1), expires_at: z.string() }).parse(await response.json()).token;
 }
-async function session(args: { endpoint: 'tts' | 'asr'; setup: object; send: (socket: WebSocket) => Promise<void>; receive: (message: VoiceMessage) => void }) {
+export async function voiceSession(args: { endpoint: 'tts' | 'asr'; setup: object; send: (socket: WebSocket) => Promise<void>; receive: (message: VoiceMessage) => void }) {
   const url = new URL(`wss://api.gradium.ai/api/speech/${args.endpoint}`); url.searchParams.set('token', await token());
   const socket = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
@@ -34,7 +34,7 @@ export async function voiceSmoke() {
   if (!config().GRADIUM_API_KEY) { process.stdout.write('SKIP: GRADIUM_API_KEY unset\n'); return; }
   const sentence = 'Build a habit tracker with daily reminders.';
   const audio: Uint8Array[] = []; let sentAt = 0; let ttfa: number | undefined;
-  await session({ endpoint: 'tts', setup: { voice_id: 'YTpq7expH9539ERJ', model_name: 'default', output_format: 'pcm' },
+  await voiceSession({ endpoint: 'tts', setup: { voice_id: 'YTpq7expH9539ERJ', model_name: 'default', output_format: 'pcm' },
     send: async socket => { sentAt = performance.now(); socket.send(JSON.stringify({ type: 'text', text: `${sentence} <flush>` })); socket.send(JSON.stringify({ type: 'end_of_stream' })); },
     receive: message => { if (message.type === 'audio') { ttfa ??= performance.now() - sentAt; audio.push(fromBase64(message.audio)); } },
   });
@@ -42,7 +42,7 @@ export async function voiceSmoke() {
   const frames = audio.flatMap(bytes => resampler.push(decodePCM(bytes)));
   const duration = audio.reduce((sum, bytes) => sum + bytes.length, 0) / 96000;
   const transcript: string[] = []; let sttStart = 0; let firstText: number | undefined;
-  await session({ endpoint: 'asr', setup: { model_name: 'default', input_format: 'pcm', json_config: { language: 'en', delay_in_frames: 8 } },
+  await voiceSession({ endpoint: 'asr', setup: { model_name: 'default', input_format: 'pcm', json_config: { language: 'en', delay_in_frames: 8 } },
     send: async socket => {
       sttStart = performance.now();
       for (const frame of [...frames, ...Array.from({ length: 12 }, () => new Uint8Array(3840))]) {

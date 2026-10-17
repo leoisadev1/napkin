@@ -3,6 +3,7 @@ export const VoiceMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('audio'), audio: z.string() }),
   z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({ type: z.literal('end_text') }),
   z.object({ type: z.literal('step'), vad: z.array(z.object({ inactivity_prob: z.number().min(0).max(1) })) }),
   z.object({ type: z.literal('flushed'), flush_id: z.number() }),
   z.object({ type: z.literal('end_of_stream') }),

@@ -2,12 +2,11 @@ import { ServerStatus, type ChatTurn } from '../../../shared/agent-protocol';
 import { agentEvents } from '../../agent/client';
 import { captureMicrophone } from '../../voice/microphone';
 import { SpeechToText } from '../../voice/stt';
-import { TextToSpeech } from '../../voice/tts';
 import type { BoardBridge, ConversationPhase, TranscriptEntry } from '../types';
 
-type Snapshot = { phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
+type Snapshot = { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
 export class ConversationEngine {
-  private state: Snapshot = { phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false };
+  private state: Snapshot = { sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false };
   private listeners = new Set<() => void>();
   private levels = new Set<(level: number) => void>();
   private outputLevels = new Set<(level: number) => void>();
@@ -15,7 +14,8 @@ export class ConversationEngine {
   private pending = new Set<string>();
   private active: AbortController | undefined;
   private stt: SpeechToText | undefined;
-  private tts: TextToSpeech | undefined;
+  private queue: { mode: 'live' | 'turn'; text: string; history: ChatTurn[] }[] = [];
+  private stretchId: string | undefined;
   private context: AudioContext | undefined;
   private stopMic: (() => void) | undefined;
   private voiceGeneration = 0;
@@ -49,8 +49,8 @@ export class ConversationEngine {
       if (generation !== this.voiceGeneration) return;
       const stt = new SpeechToText({
         onPartial: partial => this.update({ partial }),
-        onTurn: text => this.sendText(text),
-        onBargeIn: () => { if (this.active || this.tts) this.interrupt(); },
+        onPhrase: text => this.receivePhrase(text),
+        onTurn: () => this.finishSpokenStretch(),
         onError: error => { if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error.message } }); } },
       });
       this.stt = stt;
@@ -58,7 +58,7 @@ export class ConversationEngine {
       if (generation !== this.voiceGeneration) { stt.stop(); return; }
       const stop = await captureMicrophone({ context, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)) });
       if (generation !== this.voiceGeneration) { stop(); return; }
-      this.stopMic = stop; this.update({ phase: this.state.phase.kind === 'speaking' ? this.state.phase : this.active ? { kind: 'thinking' } : this.resting() });
+      this.stopMic = stop; this.update({ phase: this.resting() });
     } catch (error) {
       if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Could not start microphone' } }); }
     } finally { if (generation !== this.voiceGeneration && context.state !== 'closed') await context.close(); }
@@ -72,68 +72,86 @@ export class ConversationEngine {
   };
   interrupt = () => {
     this.active?.abort(); this.active = undefined;
-    this.tts?.stop(); this.tts = undefined;
+    const undispatched = this.queue[0];
+    if (undispatched) this.history = undispatched.history;
+    this.queue = [];
+    this.stt?.resetPhrases(); this.finishSpokenStretch();
     for (const id of this.pending) this.bridge.clearPending(id);
     this.pending.clear();
-    this.update({ phase: this.resting(), transcript: this.state.transcript.map(entry => ({ ...entry, final: true })) });
+    this.update({ sketching: false, partial: '', phase: this.resting(), transcript: this.state.transcript.map(entry => ({ ...entry, final: true })) });
   };
+  /** A committed STT phrase. New speech is queued and never aborts drawing. */
+  receivePhrase = (value: string) => {
+    const text = value.trim(); if (!text) return;
+    if (!this.stretchId) this.stretchId = crypto.randomUUID();
+    const id = this.stretchId;
+    const previous = this.state.transcript.find(entry => entry.id === id);
+    this.update({ suggestions: [], transcript: [...this.state.transcript.filter(entry => entry.id !== id),
+      { id, role: 'user', text: previous ? `${previous.text} ${text}` : text, final: false } satisfies TranscriptEntry].slice(-20) });
+    this.enqueue(text, 'live');
+  };
+  finishSpokenStretch = () => {
+    const id = this.stretchId; this.stretchId = undefined;
+    this.update({ transcript: this.state.transcript.map(entry => entry.id === id ? { ...entry, final: true } : entry) });
+  };
+  pickSuggestion = (text: string) => { this.update({ suggestions: [] }); this.sendText(text); };
   sendText = (value: string) => {
     const text = value.trim(); if (!text) return;
     if (text.length > 4000) { this.update({ phase: { kind: 'error', message: 'Please keep a turn under 4,000 characters' } }); return; }
-    this.interrupt();
-    const abort = new AbortController(); this.active = abort;
-    const history = this.history.slice(-20); this.history = [...this.history, { role: 'user', text } satisfies ChatTurn].slice(-20);
-    const replyId = crypto.randomUUID();
-    this.update({ phase: { kind: 'thinking' }, partial: '', transcript: [...this.state.transcript,
+    this.finishSpokenStretch();
+    this.update({ suggestions: [], transcript: [...this.state.transcript,
       { id: crypto.randomUUID(), role: 'user', text, final: true } satisfies TranscriptEntry].slice(-20) });
-    if (this.context && this.stt) {
-      const tts = new TextToSpeech(this.context, {
-        onSpeaking: () => { if (this.tts === tts) this.update({ phase: { kind: 'speaking' } }); },
-        onQuiet: () => { if (this.tts === tts) this.update({ phase: this.active ? { kind: 'thinking' } : this.resting() }); },
-        onDone: () => { if (this.tts === tts) { this.tts = undefined; this.update({ phase: this.active ? { kind: 'thinking' } : this.resting() }); } },
-        onLevel: level => this.outputLevels.forEach(listener => listener(level)),
-        onError: error => { if (this.tts === tts) { tts.stop(); this.tts = undefined; this.update({ phase: { kind: 'error', message: error.message } }); } },
-      });
-      this.tts = tts; void tts.connect().catch(error => { if (this.tts === tts) { tts.stop(); this.tts = undefined; this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Speech unavailable' } }); } });
+    this.enqueue(text, 'turn');
+  };
+  private enqueue(text: string, mode: 'live' | 'turn') {
+    // Each history snapshot excludes its own new phrase, even when it waits behind another request.
+    for (let offset = 0; offset < text.length; offset += 4000) {
+      const part = text.slice(offset, offset + 4000);
+      this.queue.push({ mode, text: part, history: this.history.slice(-20) });
+      this.history = [...this.history, { role: 'user', text: part } satisfies ChatTurn].slice(-20);
     }
-    void (async () => {
-      let reply = ''; let done = false;
-      try {
-        for await (const event of agentEvents({ utterance: text, history, board: this.bridge.getSummary() }, abort.signal)) {
-          if (abort.signal.aborted) return;
-          switch (event.type) {
-            case 'op': this.bridge.apply(event.op); break;
-            case 'pending': this.pending.add(event.id); this.bridge.showPending(event); break;
-            case 'pending_done': this.pending.delete(event.id); this.bridge.clearPending(event.id); break;
-            case 'say': {
-              reply += event.text; this.tts?.push(event.text);
-              const entries = this.state.transcript.filter(entry => entry.id !== replyId);
-              this.update({ transcript: [...entries, { id: replyId, role: 'assistant', text: reply, final: false } satisfies TranscriptEntry].slice(-20) });
-              break;
-            }
-            case 'error': throw new Error(event.message);
-            case 'done': done = true; break;
-            default: { const exhaustive: never = event; void exhaustive; }
+    void this.drain();
+  }
+  private async drain() {
+    if (this.active) return;
+    const batch = this.queue.shift(); if (!batch) return;
+    while (batch.mode === 'live' && this.queue[0]?.mode === 'live' && batch.text.length + (this.queue[0]?.text.length ?? 0) + 1 <= 4000) {
+      const next = this.queue.shift(); if (next) batch.text += ` ${next.text}`;
+    }
+    const abort = new AbortController(); this.active = abort;
+    const replyId = crypto.randomUUID(); let reply = ''; let done = false;
+    this.update({ sketching: true, phase: this.stt ? this.resting() : { kind: 'thinking' } });
+    try {
+      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: batch.history, board: this.bridge.getSummary() }, abort.signal)) {
+        if (abort.signal.aborted) return;
+        switch (event.type) {
+          case 'op': this.bridge.apply(event.op); break;
+          case 'pending': this.pending.add(event.id); this.bridge.showPending(event); break;
+          case 'pending_done': this.pending.delete(event.id); this.bridge.clearPending(event.id); break;
+          case 'suggestions': this.update({ suggestions: event.items }); break;
+          case 'say': {
+            reply += event.text;
+            if (reply.trim()) this.update({ transcript: [...this.state.transcript.filter(entry => entry.id !== replyId),
+              { id: replyId, role: 'assistant', text: reply, final: false } satisfies TranscriptEntry].slice(-20) });
+            break;
           }
-        }
-        if (!done) throw new Error('The response was interrupted. Please try again.');
-        if (this.active === abort) {
-          this.active = undefined;
-          if (reply) this.tts?.finish(); else { this.tts?.stop(); this.tts = undefined; }
-          if (!this.tts) this.update({ phase: this.resting() });
-        }
-      } catch (error) {
-        if (!abort.signal.aborted && this.active === abort) {
-          this.active = undefined; this.tts?.stop(); this.tts = undefined;
-          this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Could not complete turn' } });
-        }
-      } finally {
-        if (!abort.signal.aborted) {
-          if (reply) this.history = [...this.history, { role: 'assistant', text: reply.slice(0, 4000) } satisfies ChatTurn].slice(-20);
-          this.update({ transcript: this.state.transcript.map(entry => entry.id === replyId ? { ...entry, final: true } : entry) });
-          for (const id of this.pending) this.bridge.clearPending(id); this.pending.clear();
+          case 'error': throw new Error(event.message);
+          case 'done': done = true; break;
+          default: { const exhaustive: never = event; void exhaustive; }
         }
       }
-    })();
-  };
+      if (!done) throw new Error('The response was interrupted. Please try again.');
+      if (reply.trim()) this.history = [...this.history, { role: 'assistant', text: reply.slice(0, 4000) } satisfies ChatTurn].slice(-20);
+    } catch (error) {
+      if (!abort.signal.aborted) this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Could not complete turn' } });
+    } finally {
+      if (this.active === abort) {
+        this.active = undefined;
+        for (const id of this.pending) this.bridge.clearPending(id); this.pending.clear();
+        this.update({ sketching: false, ...(this.state.phase.kind === 'error' ? {} : { phase: this.resting() }),
+          transcript: this.state.transcript.map(entry => entry.id === replyId ? { ...entry, final: true } : entry) });
+        void this.drain();
+      }
+    }
+  }
 }
