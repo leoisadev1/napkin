@@ -58,6 +58,7 @@ export class SpeechToText {
       if (Date.now() - this.connectedAt >= 30_000) this.reconnects = 0;
     }
   }
+  flushPhrases() { this.chunker.pause(); }
   resetPhrases() {
     this.chunker.reset(); this.detector.reset();
     if (this.socket?.readyState === WebSocket.OPEN) {

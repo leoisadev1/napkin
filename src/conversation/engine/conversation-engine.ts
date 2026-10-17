@@ -1,4 +1,5 @@
 import { ServerStatus, type ChatTurn } from '../../../shared/agent-protocol';
+import type { BoardOp, BoardSummary } from '../../../shared/board';
 import { agentEvents } from '../../agent/client';
 import { captureMicrophone } from '../../voice/microphone';
 import { SpeechToText } from '../../voice/stt';
@@ -14,7 +15,12 @@ export class ConversationEngine {
   private pending = new Set<string>();
   private active: AbortController | undefined;
   private stt: SpeechToText | undefined;
+  private suggestionRequest: AbortController | undefined;
+  private suggestionStretch: string | undefined;
+  private pauseTimer: ReturnType<typeof setTimeout> | undefined;
   private queue: { mode: 'live' | 'turn'; text: string; history: ChatTurn[] }[] = [];
+  private uncommittedWords = false;
+  private mockups = new Map<string, Extract<BoardOp, { op: 'add_mockup' }>>();
   private stretchId: string | undefined;
   private context: AudioContext | undefined;
   private stopMic: (() => void) | undefined;
@@ -48,7 +54,7 @@ export class ConversationEngine {
       if (!parsed.voice) throw new Error('Voice is not configured; you can still type');
       if (generation !== this.voiceGeneration) return;
       const stt = new SpeechToText({
-        onPartial: partial => this.update({ partial }),
+        onPartial: partial => this.receivePartial(partial),
         onPhrase: text => this.receivePhrase(text),
         onTurn: () => this.finishSpokenStretch(),
         onError: error => { if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error.message } }); } },
@@ -75,31 +81,54 @@ export class ConversationEngine {
     const undispatched = this.queue[0];
     if (undispatched) this.history = undispatched.history;
     this.queue = [];
-    this.stt?.resetPhrases(); this.finishSpokenStretch();
+    this.cancelSuggestions(); clearTimeout(this.pauseTimer);
+    this.stt?.resetPhrases(); this.stretchId = undefined; this.uncommittedWords = false;
     for (const id of this.pending) this.bridge.clearPending(id);
     this.pending.clear();
     this.update({ sketching: false, partial: '', phase: this.resting(), transcript: this.state.transcript.map(entry => ({ ...entry, final: true })) });
   };
+  private cancelSuggestions() {
+    this.suggestionStretch = undefined;
+    this.suggestionRequest?.abort(); this.suggestionRequest = undefined;
+  }
+  private newSpeech() {
+    this.cancelSuggestions();
+    clearTimeout(this.pauseTimer);
+    this.pauseTimer = setTimeout(() => {
+      this.stt?.flushPhrases();
+      this.finishSpokenStretch();
+    }, 1500);
+  }
+  receivePartial = (partial: string) => {
+    if (partial.trim() && partial !== this.state.partial) { this.uncommittedWords = true; this.newSpeech(); }
+    this.update({ partial });
+  };
   /** A committed STT phrase. New speech is queued and never aborts drawing. */
   receivePhrase = (value: string) => {
     const text = value.trim(); if (!text) return;
+    if (!this.uncommittedWords) this.newSpeech();
+    this.uncommittedWords = false;
     if (!this.stretchId) this.stretchId = crypto.randomUUID();
     const id = this.stretchId;
     const previous = this.state.transcript.find(entry => entry.id === id);
-    this.update({ suggestions: [], transcript: [...this.state.transcript.filter(entry => entry.id !== id),
+    this.update({ transcript: [...this.state.transcript.filter(entry => entry.id !== id),
       { id, role: 'user', text: previous ? `${previous.text} ${text}` : text, final: false } satisfies TranscriptEntry].slice(-20) });
     this.enqueue(text, 'live');
   };
   finishSpokenStretch = () => {
+    clearTimeout(this.pauseTimer);
     const id = this.stretchId; this.stretchId = undefined;
+    if (id) this.suggestionStretch = this.state.transcript.find(entry => entry.id === id)?.text.slice(-4000);
     this.update({ transcript: this.state.transcript.map(entry => entry.id === id ? { ...entry, final: true } : entry) });
+    void this.drain();
   };
   pickSuggestion = (text: string) => { this.update({ suggestions: [] }); this.sendText(text); };
   sendText = (value: string) => {
     const text = value.trim(); if (!text) return;
     if (text.length > 4000) { this.update({ phase: { kind: 'error', message: 'Please keep a turn under 4,000 characters' } }); return; }
-    this.finishSpokenStretch();
-    this.update({ suggestions: [], transcript: [...this.state.transcript,
+    this.cancelSuggestions(); clearTimeout(this.pauseTimer);
+    this.stretchId = undefined; this.uncommittedWords = false;
+    this.update({ transcript: [...this.state.transcript.map(entry => ({ ...entry, final: true })),
       { id: crypto.randomUUID(), role: 'user', text, final: true } satisfies TranscriptEntry].slice(-20) });
     this.enqueue(text, 'turn');
   };
@@ -112,9 +141,46 @@ export class ConversationEngine {
     }
     void this.drain();
   }
+  private requestHistory(history: ChatTurn[], board: BoardSummary): ChatTurn[] {
+    // BoardSummary carries only titles. Include generated components so a same-id
+    // replacement can preserve the actual screen when later speech enriches it.
+    const context: ChatTurn[] = board.items.flatMap(item => {
+      const mockup = item.kind === 'mockup' ? this.mockups.get(item.id) : undefined;
+      return mockup ? [{ role: 'assistant', text: `Current mockup: ${JSON.stringify(mockup)}` } satisfies ChatTurn] : [];
+    }).slice(-10);
+    return [...history.slice(-(20 - context.length)), ...context];
+  }
+  private applyOperation(op: BoardOp) {
+    this.bridge.apply(op);
+    if (op.op === 'add_mockup') this.mockups.set(op.id, op);
+    else if (op.op === 'clear') this.mockups.clear();
+    else if (op.op === 'delete') op.ids.forEach(id => this.mockups.delete(id));
+    else if (op.op === 'update' && op.label !== undefined) {
+      const mockup = this.mockups.get(op.id);
+      if (mockup) this.mockups.set(op.id, { ...mockup, title: op.label });
+    }
+  }
+  private async suggest() {
+    const text = this.suggestionStretch;
+    if (!text || this.suggestionRequest || this.active || this.queue.length) return;
+    this.suggestionStretch = undefined;
+    const abort = new AbortController(); this.suggestionRequest = abort;
+    try {
+      const board = this.bridge.getSummary();
+      for await (const event of agentEvents({ mode: 'suggest', utterance: text, history: this.requestHistory(this.history, board), board }, abort.signal)) {
+        if (abort.signal.aborted) return;
+        if (event.type === 'suggestions') this.update({ suggestions: event.items });
+      }
+    } catch {
+      // Suggestions are optional; drawing and existing chips remain available on failure.
+    } finally {
+      if (this.suggestionRequest === abort) this.suggestionRequest = undefined;
+    }
+  }
   private async drain() {
     if (this.active) return;
-    const batch = this.queue.shift(); if (!batch) return;
+    const batch = this.queue.shift();
+    if (!batch) { void this.suggest(); return; }
     while (batch.mode === 'live' && this.queue[0]?.mode === 'live' && batch.text.length + (this.queue[0]?.text.length ?? 0) + 1 <= 4000) {
       const next = this.queue.shift(); if (next) batch.text += ` ${next.text}`;
     }
@@ -122,10 +188,11 @@ export class ConversationEngine {
     const replyId = crypto.randomUUID(); let reply = ''; let done = false;
     this.update({ sketching: true, phase: this.stt ? this.resting() : { kind: 'thinking' } });
     try {
-      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: batch.history, board: this.bridge.getSummary() }, abort.signal)) {
+      const board = this.bridge.getSummary();
+      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: this.requestHistory(batch.history, board), board }, abort.signal)) {
         if (abort.signal.aborted) return;
         switch (event.type) {
-          case 'op': this.bridge.apply(event.op); break;
+          case 'op': this.applyOperation(event.op); break;
           case 'pending': this.pending.add(event.id); this.bridge.showPending(event); break;
           case 'pending_done': this.pending.delete(event.id); this.bridge.clearPending(event.id); break;
           case 'suggestions': this.update({ suggestions: event.items }); break;

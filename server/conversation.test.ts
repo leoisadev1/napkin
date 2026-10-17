@@ -13,8 +13,8 @@ for (const failure of ['stt', 'connect', 'agent']) {
   }, 5000);
 }
 
-test('live speech serializes and coalesces drawing, preserves listening, supports cancel and chips without TTS', async () => {
+test('live speech serializes and coalesces drawing, preserves listening, supports pause suggestions, cancellation and chips without TTS', async () => {
   const child = Bun.spawn(['bun', 'server/fixtures/live-engine.ts'], { stdout: 'pipe', stderr: 'pipe' });
   const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   expect(error).toBe(''); expect(exit).toBe(0);
-}, 5000);
+}, 10000);

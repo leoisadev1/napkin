@@ -11,7 +11,7 @@ frame ID [in:FRAME|near:ID:right|left|above|below] "Title"
 box|ellipse|diamond|sticky|text ID COLOR [PLACEMENT] "Label"
 edge ID FROM->TO "Label"
 phone|desktop ID [PLACEMENT] "Title" | header:Title | list:Habits | button:Check in | tabbar:Today,Feed
-Mockup component kinds: header text button input image card list tabbar toggle avatar chart. 1-12 components, labels <=80 chars.
+Mockup component kinds: header text button input image card list tabbar toggle avatar chart. Every phone/desktop line MUST include 4-8 meaningful components derived from the conversation: header, list rows, buttons, tabbar, chart, etc. Never output a header-only mockup. Labels <=80 chars. When later phrases describe an existing screen, re-emit its phone/desktop line with the SAME id and the full enriched component list, preserving prior components. Re-adding a mockup id replaces it in place; update only changes its title/color, not its components.
 update ID [color:COLOR] ["New label"]
 move ID PLACEMENT
 del ID [ID ...]
@@ -20,10 +20,12 @@ clear
 image ID "Generation prompt" "Caption" [PLACEMENT]
 suggest: concrete next thing | another next thing | third thing
 Colors: gray blue green yellow orange red purple pink teal. Shape labels <=200 chars; edge labels <=60; titles/captions <=80.
-A frame MUST be immediately followed by a child using in:FRAME in this response. Never emit empty frames. Prefer adding to an existing frame. For a new empty board, FIRST emit a frame then a box child, for example:
+A frame MUST be immediately followed by a child using in:FRAME in this response. Never emit empty frames. Reuse an existing frame for the SAME area. Create separate frames for distinct areas such as "Core loop", "Engagement", and "Main screen" instead of collecting every concept in one frame. A screen/mockup is a distinct area: put it in a dedicated frame named for the screen, never in the core-loop frame. When the new phrase introduces engagement/social features, create their own frame even in live mode. For a new empty board, FIRST emit a frame then a box child, for example:
 frame core "Habit tracker"
 box habits blue in:core "Habit tracker"
 Adapt the example to the subject. In live mode prefer boxes; add a phone/desktop only when the new phrase asks for a screen or mockup. Images only when requested; they are slow. Only clear/delete when requested. Suggestions: at most 3 concrete additions, <=40 characters each, at the end. Never speak or acknowledge.`;
+const suggestPrompt = `Return ONLY one line: suggest: first addition | second addition | optional third addition
+Give 2-3 concrete next additions grounded in the user's speaking stretch, history, and board. Each item is <=40 characters, phrased as a short imperative or question, such as "Add onboarding flow" or "Where do reminders get sent?". Do not repeat what's on the board. No drawing commands, prose, markdown, or acknowledgment.`;
 export function validateOperation(value: unknown): BoardOp | undefined {
   const parsed = BoardOp.safeParse(value);
   if (!parsed.success) { log('invalid_board_op', { issues: parsed.error.issues.length }); return; }
@@ -72,7 +74,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
     images.push(ready.then(() => {}));
   };
   const parser = new DrawingStream(line => {
-    if (signal.aborted) return;
+    if (signal.aborted || (input.mode === 'suggest' && line.kind !== 'suggestions')) return;
     switch (line.kind) {
       case 'op': scheduleOp(line.op); break;
       case 'suggestions': emit({ type: 'suggestions', items: line.items }); break;
@@ -102,11 +104,11 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
   });
   try {
     const result = streamText({ model: provider.model,
-      system: systemPrompt + (input.mode === 'live'
-        ? '\nLIVE: Draw ONLY what the NEW phrase adds, typically 1-4 lines, zero if nothing new. Earlier phrases are context only. Do not anticipate features. Prefer ONE box per new concept, short labels, and no edges unless the phrase describes a relationship. Keep output minimal. Suggestions only if naturally useful.'
+      system: input.mode === 'suggest' ? suggestPrompt : systemPrompt + (input.mode === 'live'
+        ? '\nLIVE: Draw ONLY what the NEW phrase adds, typically 1-4 lines, zero if nothing new. Earlier phrases are context only. Do not anticipate features. Prefer ONE box per new concept, short labels, and no edges unless the phrase describes a relationship. Keep output minimal, except mockups need 4-8 components. Enrich an existing screen when this phrase describes it, reusing its id. No suggestions in live mode; a separate pause pass handles them.'
         : '\nTURN: Draw a fuller useful set if needed. End with short concrete next-step suggestions.'),
       messages: [...input.history.map(turn => ({ role: turn.role, content: turn.text })), { role: 'user', content: `Board: ${JSON.stringify(input.board)}\nNEW phrase: ${input.utterance}` }],
-      abortSignal: signal, maxRetries: 0, maxOutputTokens: input.mode === 'live' ? 220 : 1600,
+      abortSignal: signal, maxRetries: 0, maxOutputTokens: input.mode === 'suggest' ? 60 : input.mode === 'live' ? 360 : 1600,
       providerOptions: { openai: { reasoningEffort: 'low' } },
       onError: ({ error }) => log('llm_stream_failed', { kind: error instanceof Error ? error.name : 'unknown' }),
     });

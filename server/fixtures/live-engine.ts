@@ -1,4 +1,5 @@
 import { expect, mock } from 'bun:test';
+import { BoardOp } from '../../shared/board';
 import { AgentRequest } from '../../shared/agent-protocol';
 import type { BoardBridge } from '../../src/conversation/types';
 import { BoardState } from '../board-state';
@@ -14,7 +15,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
 let speech: { onPhrase?: (text: string) => void; onPartial: (text: string) => void; onTurn: (text: string) => void } | undefined;
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class {
   constructor(callbacks: NonNullable<typeof speech>) { speech = callbacks; }
-  async connect() {} send() {} stop() {} resetPhrases() { speech?.onPartial(''); }
+  async connect() {} send() {} stop() {} flushPhrases() {} resetPhrases() { speech?.onPartial(''); }
 } }));
 mock.module('../../src/voice/microphone', () => ({ captureMicrophone: async () => () => {} }));
 mock.module('../../src/voice/tts', () => ({ TextToSpeech: class { constructor() { throw new Error('TTS must never open'); } } }));
@@ -46,3 +47,56 @@ expect(engine.getSnapshot().transcript.filter(t => t.role === 'assistant')).toHa
 engine.receivePhrase('first'); engine.receivePhrase('a'.repeat(3000)); engine.receivePhrase('b'.repeat(3000)); await finish(3);
 expect(requests[4]?.input.utterance.length).toBe(3000); await finish(4); expect(requests[5]?.input.utterance.length).toBe(3000); await finish(5);
 engine.stopVoice();
+
+// Pauses wait for all drawing, issue one suggestion pass, and never repeat without speech.
+const paused = new ConversationEngine(bridge); await paused.startVoice();
+const base = requests.length;
+speech?.onPhrase?.('Build a main screen');
+speech?.onPhrase?.('with a habit list'); speech?.onTurn('');
+expect(requests).toHaveLength(base + 1);
+await finish(base); expect(requests[base + 1]?.input.mode).toBe('live');
+await finish(base + 1);
+expect(requests[base + 2]?.input.mode).toBe('suggest');
+expect(requests[base + 2]?.input.utterance).toBe('Build a main screen with a habit list');
+send(base + 2, '{"type":"suggestions","items":["Add reminders","Add streaks"]}\n'); await finish(base + 2);
+speech?.onTurn(''); await Bun.sleep(1600);
+expect(requests).toHaveLength(base + 3);
+expect(paused.getSnapshot().suggestions).toEqual(['Add reminders', 'Add streaks']);
+// Fallback silence also requests suggestions, and partial words cancel them immediately.
+speech?.onPhrase?.('Add a check-in button'); await finish(base + 3); await Bun.sleep(1550);
+expect(requests[base + 4]?.input.mode).toBe('suggest');
+speech?.onPartial('And');
+expect(requests[base + 4]?.signal?.aborted).toBe(true);
+expect(paused.getSnapshot().suggestions).toEqual(['Add reminders', 'Add streaks']);
+speech?.onPhrase?.('And a weekly chart');
+expect(requests[base + 5]?.input.mode).toBe('live');
+speech?.onPartial('with streaks');
+expect(requests[base + 5]?.signal?.aborted).toBe(false);
+// Canceling closes the stream so late events cannot replace chips.
+expect(() => send(base + 4, '{"type":"suggestions","items":["Stale"]}\n')).toThrow();
+expect(paused.getSnapshot().suggestions).toEqual(['Add reminders', 'Add streaks']);
+await finish(base + 5); paused.stopVoice(); await Bun.sleep(1600);
+expect(requests).toHaveLength(base + 6);
+
+// Use the real chunker: its 350ms commit must not restart the 1.5s word-silence clock.
+const { PhraseChunker } = await import('../../src/voice/phrase-chunker');
+const timed = new ConversationEngine(bridge);
+const chunker = new PhraseChunker({ onPartial: timed.receivePartial, onPhrase: timed.receivePhrase });
+const timedBase = requests.length; const lastWord = performance.now();
+chunker.addText('show all my habits for today');
+await Bun.sleep(400); expect(requests[timedBase]?.input.mode).toBe('live'); await finish(timedBase);
+await Bun.sleep(Math.max(0, 1650 - (performance.now() - lastWord)));
+expect(requests[timedBase + 1]?.input.mode).toBe('suggest');
+timed.interrupt(); chunker.reset();
+
+// Queue a follow-up before a mockup arrives; dispatch must include its actual components.
+const screens = new ConversationEngine(bridge); const screenBase = requests.length;
+screens.receivePhrase('Draw a phone main screen'); screens.receivePhrase('Add a weekly chart');
+const mockup = { op: 'add_mockup', id: 'main-screen', title: 'Main screen', device: 'phone', placement: { kind: 'auto' }, components: [
+  { kind: 'header', label: 'Today' }, { kind: 'list', label: 'Read a chapter' }, { kind: 'button', label: 'Check in' }, { kind: 'tabbar', label: 'Today,Friends' },
+] } satisfies import('../../shared/board').BoardOp;
+send(screenBase, `${JSON.stringify({ type: 'op', op: mockup })}\n`); await finish(screenBase);
+const screenContext = requests[screenBase + 1]?.input.history.find(turn => turn.role === 'assistant' && turn.text.startsWith('Current mockup: '));
+if (!screenContext) throw new Error('Missing mockup context');
+expect(BoardOp.parse(JSON.parse(screenContext.text.slice('Current mockup: '.length)))).toEqual(mockup);
+screens.interrupt();
