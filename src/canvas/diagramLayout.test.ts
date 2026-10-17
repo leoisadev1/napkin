@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DiagramNode } from "../../shared/board";
 import type { DiagramLayout, DiagramSpec } from "./diagramLayout";
-import { boundTextRoom, estimateText, layoutDiagram, splitDate } from "./diagramLayout";
+import { boundTextRoom, estimateText, layoutDiagram, lineCount, splitDate } from "./diagramLayout";
 import type { Rect } from "./geometry";
 import { contains, inflate, overlaps, segmentHitsRect } from "./geometry";
 
@@ -24,7 +24,25 @@ const LONG = [
   "Decide the next bet together",
 ];
 
+/** The real agent output Leo called rough: long labels everywhere, the center longest of all. */
+const HABIT = [
+  "Underserved audience: tailor to overlooked needs",
+  "Unexpected pairing: combine two useful ideas",
+  "Reverse a norm: challenge the default approach",
+  "Useful constraint: faster, simpler, or offline",
+  "One painful task — make it dramatically easier",
+  "Seasonal habits: switch to travel or busy-week plans without treating reduced goals as failure",
+];
+const COMEBACK = "Comeback-first: after a miss, offer a 2-minute restart; measure return speed, not streaks";
+
 const STRESS: Record<string, DiagramSpec> = {
+  mindmapLong: spec("mindmap", [
+    { id: "hub", label: COMEBACK, shape: "ellipse", color: "green" },
+    ...HABIT.map((label, i) => ({ id: `arm${i}`, label, parent: "hub", color: "orange" as const })),
+  ]),
+  cycleLong: spec("cycle", HABIT.slice(0, 5).map((label, i) => ({ id: `c${i}`, label, shape: "ellipse" as const }))),
+  flowLong: spec("flow", HABIT.slice(0, 4).map((label, i) => ({ id: `l${i}`, label }))),
+  treeLong: spec("tree", [{ id: "root", label: COMEBACK }, ...HABIT.slice(0, 4).map((label, i) => ({ id: `t${i}`, label, parent: "root" }))]),
   cycle8: spec("cycle", LONG.map((label, i) => ({ id: `s${i}`, label }))),
   cycle3: spec("cycle", [{ id: "plan" }, { id: "do" }, { id: "review" }]),
   mindmap12: spec("mindmap", [
@@ -199,6 +217,66 @@ describe("layoutDiagram", () => {
     expect(arms.filter((x) => x > centerX).length).toBe(2);
     // Children share their arm's color.
     expect(layout.nodes.find((n) => n.id === "tasks")?.color).toBe("yellow");
+  });
+
+  test("a long mindmap center grows wide as a rounded box instead of a tall ellipse", () => {
+    const layout = layoutDiagram(STRESS.mindmapLong ?? spec("mindmap", []), estimateText);
+    const hub = layout.nodes.find((n) => n.role === "center");
+    expect(hub).toBeDefined();
+    if (hub === undefined) return;
+    expect(hub.shape).toBe("box");
+    expect(hub.rect.w).toBeLessThanOrEqual(320);
+    expect(hub.rect.w).toBeGreaterThan(hub.rect.h);
+    expect(lineCount(hub.text.text)).toBeLessThanOrEqual(4);
+  });
+
+  test("a short mindmap center stays an ellipse wider than it is tall", () => {
+    const layout = layoutDiagram(spec("mindmap", [{ id: "hub", label: "Habit app" }, { id: "a", parent: "hub" }, { id: "b", parent: "hub" }]), estimateText);
+    const hub = layout.nodes.find((n) => n.role === "center");
+    expect(hub?.shape).toBe("ellipse");
+    if (hub !== undefined) expect(hub.rect.w / hub.rect.h).toBeGreaterThanOrEqual(1.34);
+  });
+
+  test("mindmap links run from the center's edge to each child's edge", () => {
+    const layout = layoutDiagram(STRESS.mindmapLong ?? spec("mindmap", []), estimateText);
+    const rect = (id: string | null) => layout.nodes.find((n) => n.id === id)?.rect ?? { x: 0, y: 0, w: 0, h: 0 };
+    const hub = layout.nodes.find((n) => n.role === "center");
+    for (const c of layout.connectors) {
+      const start = c.points[0];
+      const end = c.points[c.points.length - 1];
+      if (start === undefined || end === undefined || hub === undefined) throw new Error("empty connector");
+      const from = rect(c.from);
+      const to = rect(c.to);
+      // Each end sits just outside its node's side, level with it: no stub hanging in the air.
+      const nearSide = (p: { x: number; y: number }, r: Rect) =>
+        Math.min(Math.abs(p.x - r.x), Math.abs(p.x - (r.x + r.w))) <= 10 && p.y >= r.y && p.y <= r.y + r.h;
+      expect(nearSide(start, from)).toBe(true);
+      expect(nearSide(end, to)).toBe(true);
+    }
+  });
+
+  test("mindmap arms split evenly left and right, spaced evenly down each side", () => {
+    const layout = layoutDiagram(STRESS.mindmapLong ?? spec("mindmap", []), estimateText);
+    const hub = layout.nodes.find((n) => n.role === "center")?.rect ?? { x: 0, y: 0, w: 0, h: 0 };
+    const arms = layout.nodes.filter((n) => n.role !== "center").map((n) => n.rect);
+    const right = arms.filter((r) => r.x > hub.x).sort((a, b) => a.y - b.y);
+    const left = arms.filter((r) => r.x < hub.x).sort((a, b) => a.y - b.y);
+    expect(Math.abs(right.length - left.length)).toBeLessThanOrEqual(1);
+    for (const side of [left, right]) {
+      const gaps = side.slice(1).map((r, i) => r.y - ((side[i]?.y ?? 0) + (side[i]?.h ?? 0)));
+      for (const g of gaps) expect(g).toBeCloseTo(gaps[0] ?? g, 0);
+    }
+  });
+
+  test("long labels widen nodes before they grow tall, and long ellipses become boxes", () => {
+    for (const name of ["cycleLong", "flowLong", "treeLong"]) {
+      const layout = layoutDiagram(STRESS[name] ?? spec("flow", []), estimateText);
+      for (const n of layout.nodes) {
+        expect(lineCount(n.text.text)).toBeLessThanOrEqual(5);
+        if (n.shape === "ellipse") expect(lineCount(n.text.text)).toBeLessThanOrEqual(3);
+        expect(n.rect.h).toBeLessThan(n.rect.w);
+      }
+    }
   });
 
   test("tree levels go top-down and parents center over children", () => {

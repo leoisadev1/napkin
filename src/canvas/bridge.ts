@@ -20,7 +20,7 @@ import { boxAround, center, contains, edgePoint, inflate, labelPointOf, overlaps
 import { mimeOf, readImageSize } from "./imageSize";
 import { dedupeNodeIds } from "./identity";
 import type { Block } from "./layout";
-import { besideSpot, fitFrame, isFree, nearestFree, overlappingPairs, pairKey, placeAtPoint, placeAuto, placeInView, placeInside, placeNear, placeOver, settleBlocks } from "./layout";
+import { alignedSpot, besideSpot, fitFrame, isAligned, isFree, nearestFree, overlappingPairs, pairKey, placeAtPoint, placeAuto, placeInView, placeInside, placeNear, placeOver, settleBlocks, snapAlign } from "./layout";
 import type { NodeKind, NodeMeta } from "./meta";
 import { metaData, nodeIdOf, readMeta } from "./meta";
 import type { PacedTask } from "./pacer";
@@ -28,6 +28,7 @@ import { createPacer } from "./pacer";
 import { SWATCHES } from "./palette";
 import type { SketchPart } from "./sketches";
 import { groupSketches, sketchIdOf, withSketchId } from "./sketches";
+import { reAddPlan } from "./membership";
 
 export const DEFAULT_TITLE = "Untitled board";
 
@@ -280,6 +281,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let followTimer: number | null = null;
   /** Elements the camera should show after the next follow: the new item, and nearby context when it fits. */
   const pendingFollow = { core: new Set<string>(), context: new Set<string>(), wide: false };
+  /** When each element the camera followed was placed, so later moves keep the rest of the thought in view. */
+  const followedAt = new Map<string, number>();
   /** Dormant frames that got their first child in the current transaction; they fade in after commit. */
   const woken = new Set<string>();
   /** True while paced ops are still waiting; set once the pacer exists. */
@@ -636,7 +639,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
             return { at, frame: { element: frameEl } };
           }
         }
-        return { at: placeNear({ size, target: rect, direction: placement.direction, obstacles: obstacles(tx, exclude) }), frame: null };
+        const blocked = obstacles(tx, exclude);
+        const near = placeNear({ size, target: rect, direction: placement.direction, obstacles: blocked });
+        return { at: snapAlign({ size, at: near, neighbours: blocked, obstacles: blocked }), frame: null };
       }
       case "at_pointer": {
         const mouse = scenePointer();
@@ -667,16 +672,30 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         const content = union(blocked);
         const { focus, anchor } = attention(tx, nodes, exclude);
         // Where the user is looking first: beside what the conversation is on, or near the mouse, inside the view.
-        const inView = placeInView({ size, view: viewRect(), focus: focus ?? startPoint(size), anchor, obstacles: blocked });
-        if (inView !== null) return { at: inView, frame: null };
+        const view = viewRect();
+        const inView = placeInView({ size, view, focus: focus ?? startPoint(size), anchor, obstacles: blocked });
+        if (inView !== null) {
+          // Tidy: line up with a neighbour's top or left edge when that is a small nudge that stays in view.
+          const snapped = snapAlign({ size, at: inView, neighbours: blocked, obstacles: blocked });
+          const at = contains(view, { ...snapped, ...size }) ? snapped : inView;
+          // A big block that still lines up with nothing goes in a row or column with a block in view instead.
+          const blocks = blocksOf(tx.elements).filter((b) => !b.elementIds.some((id) => exclude.has(id))).map((b) => b.block.rect);
+          if (Math.max(size.w, size.h) <= 240 || isAligned({ at, blocks })) return { at, frame: null };
+          // The camera follows a new diagram anyway, so a tidy spot just past the view edge beats a stray one in it.
+          const reach = inflate(view, Math.max(view.w, view.h) * 0.3);
+          return { at: alignedSpot({ size, view: reach, blocks, prefer: at, obstacles: blocked }) ?? at, frame: null };
+        }
         // The view is full: grow the board the old way, beside the last thing or in a new row.
         const last = anchorRect(tx, nodes, exclude);
         if (last === null || content === null) {
           return { at: placeAuto({ size, anchor: null, viewportCenter: startPoint(size), obstacles: blocked }), frame: null };
         }
         // Beside the last thing, or a new row under everything: whichever keeps the whole board larger on screen.
-        const beside = placeAuto({ size, anchor: last, viewportCenter: startPoint(size), obstacles: blocked });
-        const row = nearestFree({ size, preferred: { x: content.x, y: content.y + content.h + ROW_GAP }, obstacles: blocked });
+        // Either way it lines up with a neighbouring block's edge when one is close.
+        const blockRects = blocksOf(tx.elements).filter((b) => !b.elementIds.some((id) => exclude.has(id))).map((b) => b.block.rect);
+        const tidy = (at: Point) => snapAlign({ size, at, neighbours: blockRects, obstacles: blocked });
+        const beside = tidy(placeAuto({ size, anchor: last, viewportCenter: startPoint(size), obstacles: blocked }));
+        const row = tidy(nearestFree({ size, preferred: { x: content.x, y: content.y + content.h + ROW_GAP }, obstacles: blocked }));
         const zoomWith = (at: Point) => fitZoom(union([content, { ...at, ...size }]) ?? content);
         return { at: zoomWith(row) > zoomWith(beside) * 1.05 ? row : beside, frame: null };
       }
@@ -1105,6 +1124,13 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const context = scene.filter((el) => pendingFollow.context.has(el.id));
     // Earlier items of the same burst: the camera tries to show the whole group, not just the newest.
     const burst = scene.filter((el) => burstSeen.has(el.id) && !pendingFollow.core.has(el.id));
+    // Everything placed in this thread of thought: the camera should not leave any of it half under the toolbar.
+    const now0 = performance.now();
+    for (const [id, at] of followedAt) if (now0 - at > THREAD_MS) followedAt.delete(id);
+    const thread = scene.filter((el) => followedAt.has(el.id) && !pendingFollow.core.has(el.id));
+    // Newest first, one batch per earlier camera move.
+    const batches = [...new Set(thread.map((el) => followedAt.get(el.id) ?? 0))].sort((a, b) => b - a).map((t) => thread.filter((el) => followedAt.get(el.id) === t));
+    for (const el of core) followedAt.set(el.id, now0);
     for (const el of core) burstSeen.add(el.id);
     if (!pacing()) burstSeen.clear();
     const wide = pendingFollow.wide;
@@ -1145,8 +1171,17 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     // A burst is one thought, so it may zoom out as far as the floor to stay in view together.
     const burstRect = boundsOf(burst);
     const together = burstRect === null ? null : union([itemRect, burstRect, ...frames]);
+    // The new item plus as much of what came just before it as fits at a comfortable zoom.
+    let withThread: Rect | null = null;
+    for (const batch of batches) {
+      const batchRect = boundsOf(batch);
+      const next = union([withThread ?? itemRect, ...(batchRect === null ? [] : [batchRect]), ...frames]);
+      if (next === null || fitsAt(next) < limits.min) break;
+      withThread = next;
+    }
     const rect =
       (together !== null && fitsAt(together) >= limits.floor ? together : undefined) ??
+      (withThread !== null && fitsAt(withThread) >= limits.min ? withThread : undefined) ??
       options.find((r): r is Rect => r !== null && fitsAt(r) >= limits.min) ??
       itemRect;
 
@@ -1155,19 +1190,74 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const now = viewAt(zoom, base.cx, base.cy);
     if (contains({ x: now.x + margin, y: now.y + margin, w: now.w - margin * 2, h: now.h - margin * 2 }, rect)) return;
 
-    let z = Math.min(limits.max, Math.max(limits.min, zoom));
-    if (fitsAt(rect) < z) z = Math.max(limits.floor, fitsAt(rect));
-    const view = viewAt(z, base.cx, base.cy);
-    const m = limits.margin / z;
-    // Too big even at the floor: show its top (where a mockup's title and header are), never a slice of the middle.
-    const shift = (start: number, size: number, lo: number, len: number) => {
-      if (len + 2 * m > size || lo - m < start) return lo - m - start;
-      if (lo + len + m > start + size) return lo + len + m - (start + size);
-      return 0;
+    const plan = (target: Rect, zoomAt?: number) => {
+      let z = Math.min(limits.max, Math.max(limits.min, zoom));
+      if (fitsAt(target) < z) z = Math.max(limits.floor, fitsAt(target));
+      if (zoomAt !== undefined) z = Math.min(z, zoomAt);
+      const view = viewAt(z, base.cx, base.cy);
+      const m = limits.margin / z;
+      // Too big even at the floor: show its top (where a mockup's title and header are), never a slice of the middle.
+      const shift = (start: number, size: number, lo: number, len: number) => {
+        if (len + 2 * m > size || lo - m < start) return lo - m - start;
+        if (lo + len + m > start + size) return lo + len + m - (start + size);
+        return 0;
+      };
+      const dx = shift(view.x, view.w, target.x, target.w);
+      const dy0 = shift(view.y, view.h, target.y, target.h);
+      const tidy = unstraddle({
+        view: { ...view, x: view.x + dx, y: view.y + dy0 },
+        chrome: { top: insets.top / z, bottom: insets.bottom / z },
+        // Only the new item must stay in view; the rest of the thread just must not end up half under the chrome.
+        keep: itemRect,
+        others: thread,
+        margin: m,
+      });
+      return { z, dx, dy: dy0 + tidy.d, cut: tidy.cut.length };
     };
-    const dx = shift(view.x, view.w, rect.x, rect.w);
-    const dy = shift(view.y, view.h, rect.y, rect.h);
+    let next = plan(rect);
+    // No pan at this zoom keeps the thread clear of the chrome: step the zoom down, as far as stays legible, until one does.
+    for (let z = next.z - 0.05; next.cut > 0 && z >= base0.floor - 1e-6; z -= 0.05) {
+      const tried = plan(rect, z);
+      if (tried.cut === 0) next = tried;
+    }
+    const { z, dx, dy } = next;
     glide({ from: actual, to: { cx: base.cx + dx, cy: base.cy + dy, z } });
+  }
+
+  /**
+   * Extra vertical pan so that nothing from the current thread ends up cut by the toolbar or the dock: each such item
+   * is either brought fully into view or pushed fully off screen (past the chrome, not just under it), whichever is
+   * the smaller move that keeps `keep` in view. When nothing clears every item, the least covered framing wins.
+   * `cut` lists the items still left under the chrome.
+   */
+  function unstraddle(args: { view: Rect; chrome: { top: number; bottom: number }; keep: Rect; others: readonly ExcalidrawElement[]; margin: number }): { d: number; cut: Rect[] } {
+    const { view, keep, margin } = args;
+    const rects = args.others.flatMap((el) => {
+      if (el.type === "arrow" || el.type === "line" || containerIdOf(el) !== null) return [];
+      const r = boundsOf([el]);
+      return r === null || r.x + r.w < view.x || r.x > view.x + view.w ? [] : [r];
+    });
+    // Positive pans the camera down (content moves up). Items left (partly) under the toolbar or dock after a pan of `d`:
+    const top = (d: number) => view.y + d;
+    const bottom = (d: number) => view.y + view.h + d;
+    // How much of an item sits in the strips the toolbar and dock cover (scene units of height).
+    const covered = (lo: number, hi: number, r: Rect) => Math.max(0, Math.min(hi, r.y + r.h) - Math.max(lo, r.y));
+    const underChrome = (r: Rect, d: number) => covered(top(d) - args.chrome.top, top(d), r) + covered(bottom(d), bottom(d) + args.chrome.bottom, r);
+    const cutAt = (d: number) => rects.filter((r) => underChrome(r, d) > 0.5);
+    const costAt = (d: number) => rects.reduce((sum, r) => sum + underChrome(r, d), 0);
+    const keepsItem = (d: number) => keep.y >= top(d) - 1 && keep.y + keep.h <= bottom(d) + 1;
+    // Candidate pans: each item's edges lined up just inside the view or just past the chrome, off screen.
+    const candidates = [0];
+    for (const r of rects) {
+      candidates.push(r.y - margin - view.y, r.y + r.h + margin - (view.y + view.h));
+      candidates.push(r.y + r.h - (view.y - args.chrome.top), r.y - (view.y + view.h + args.chrome.bottom));
+    }
+    const best = candidates
+      .filter(keepsItem)
+      .map((d) => ({ d, cost: costAt(d) }))
+      .sort((a, b) => a.cost - b.cost || Math.abs(a.d) - Math.abs(b.d))[0];
+    const d = best?.d ?? 0;
+    return { d, cut: cutAt(d) };
   }
 
   /** Tweens the camera center and zoom together so the motion reads as one move, not a pan plus a zoom. */
@@ -1247,7 +1337,25 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   function addNode(op: Extract<BoardOp, { op: "add_shape" | "add_frame" | "add_mockup" | "add_image" }>) {
     const tx = begin();
-    const existing = liveEntry(tx, op.id);
+    const found = liveEntry(tx, op.id);
+    // A diagram's node stays in its diagram. Re-adding it as a shape edits that node in place; a loose copy left
+    // behind would sit on the diagram, and settling would slide the rest of the diagram away from it.
+    const plan = reAddPlan({ op: op.op, id: op.id, owner: found?.diagram ?? null });
+    if (plan.kind === "edit-member" && op.op === "add_shape") {
+      const laid = reshape(tx, plan.diagram, null, (spec) => ({
+        ...spec,
+        nodes: spec.nodes.map((n) => (n.id === op.id ? { ...n, label: op.label, color: op.color, shape: op.shape === "text" ? n.shape : op.shape } : n)),
+      }));
+      if (laid === null) return;
+      commit(tx, "undoable", { ghosts: true });
+      noteActivity(op.id);
+      playEntry(laid);
+      scheduleFollow(api.getSceneElements().filter((el) => laid.elementIds.has(el.id)), [], true);
+      return;
+    }
+    // Anything else under a member's id leaves the diagram first, which closes ranks, and then lands as a new item.
+    if (plan.kind !== "plain") reshape(tx, plan.diagram, null, (spec) => ({ ...spec, nodes: spec.nodes.filter((n) => n.id !== op.id) }));
+    const existing = plan.kind === "plain" ? found : undefined;
     if (existing !== undefined && existing.kind === "frame" && op.op === "add_frame") {
       // Re-declaring a frame renames it; replacing it would strand its children.
       const root = existing.root;
@@ -1617,6 +1725,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const anchors: Rect[] = [];
     const revived: ExcalidrawElement[] = [];
     const oldMembers = [...nodes.values()].filter((n) => n.diagram === diagramId).map((n) => n.id);
+    /** Other diagrams this one takes a node from; they close ranks afterwards instead of keeping a hole and a stub. */
+    const robbed = new Set<NodeId>();
 
     for (const n of spec.nodes) {
       const entry = nodes.get(n.id);
@@ -1626,6 +1736,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         continue;
       }
       if (entry !== undefined && (entry.kind === "shape" || entry.kind === "member") && entry.meta !== null) {
+        if (entry.diagram !== null) robbed.add(entry.diagram);
         // A loose box the diagram folds in travels from where it sat.
         memberIds.set(n.id, partIds(entry.elements, fallback));
         for (const el of entry.elements) taken.add(el.id);
@@ -1692,6 +1803,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       remove(tx, edges);
     }
     reroute(tx, new Set([diagramId, ...kept]));
+    for (const other of robbed) if (other !== diagramId) reshape(tx, other, null, (s) => s);
     if (old === undefined) markPlaced(diagramId);
     else if (!placedOrder.has(diagramId)) placedOrder.set(diagramId, -2e6);
 
@@ -1747,7 +1859,11 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     // Nodes deleted a moment ago that come straight back: their fading copies go, the originals glide instead.
     animator.dropGhosts(new Set(nodes.flatMap((n) => freshDeparted(n.id)?.elements.map((el) => el.id) ?? [])));
     const tx = begin();
-    const existing = liveEntry(tx, op.id);
+    const found = liveEntry(tx, op.id);
+    // A node of another diagram leaves it (which closes ranks) before a diagram takes over its id.
+    const plan = reAddPlan({ op: op.op, id: op.id, owner: found?.diagram ?? null });
+    if (plan.kind !== "plain") reshape(tx, plan.diagram, null, (spec) => ({ ...spec, nodes: spec.nodes.filter((n) => n.id !== op.id) }));
+    const existing = plan.kind === "plain" ? found : undefined;
     let where: Parameters<typeof layDiagram>[3] = { kind: "place", placement: op.placement };
     if (existing !== undefined) {
       const rect = nodeRect(existing);

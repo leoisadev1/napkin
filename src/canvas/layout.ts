@@ -7,6 +7,10 @@ import { center, contains, inflate, overlaps, union } from "./geometry";
 const GAP = 120;
 const GAP_VERTICAL = 96;
 const MARGIN = 36;
+/** Past this size (either side) a block lines up by its edges rather than its center. */
+const BIG = 200;
+/** Edges this close to a neighbour's snap to it. */
+export const ALIGN_SNAP = 40;
 export const FRAME_PAD = 36;
 const FRAME_GAP = 88;
 const FRAME_MAX_WIDTH = 1000;
@@ -121,20 +125,45 @@ export function placeInView(args: { size: Size; view: Rect; focus: Point; anchor
   return nearestFreeWithin({ size, preferred: { x: focus.x - size.w / 2, y: focus.y - size.h / 2 }, view, obstacles });
 }
 
+/**
+ * A free spot inside `view` that lines up with a block already there: right of it sharing its top edge, or below it
+ * sharing its left edge. The one nearest `prefer` wins. Null when no such spot is open.
+ */
+export function alignedSpot(args: { size: Size; view: Rect; blocks: readonly Rect[]; prefer: Point; obstacles: readonly Rect[] }): Point | null {
+  const { size, view, blocks, prefer, obstacles } = args;
+  const candidates = blocks
+    .filter((b) => overlaps(b, view))
+    .flatMap((b) => [
+      { x: b.x + b.w + GAP, y: b.y },
+      { x: b.x, y: b.y + b.h + GAP_VERTICAL },
+    ])
+    .filter((p) => contains(view, { x: p.x, y: p.y, w: size.w, h: size.h }) && isFree({ size, at: p, obstacles }));
+  candidates.sort((a, b) => Math.hypot(a.x - prefer.x, a.y - prefer.y) - Math.hypot(b.x - prefer.x, b.y - prefer.y));
+  return candidates[0] ?? null;
+}
+
+/** Whether a rect at `at` already shares a top or left edge (within ALIGN_SNAP) with one of `blocks`. */
+export function isAligned(args: { at: Point; blocks: readonly Rect[] }): boolean {
+  return args.blocks.some((b) => Math.abs(b.y - args.at.y) <= 1 || Math.abs(b.x - args.at.x) <= 1);
+}
+
 /** The spot directly beside a target, before any collision handling. */
 export function besideSpot(args: { size: Size; target: Rect; direction: Direction }): Point {
   const { size, target, direction } = args;
   const c = center(target);
   return (() => {
+    // Big blocks side by side share a top edge, and stacked ones a left edge, so the board reads in rows and columns.
+    const rowY = Math.max(target.h, size.h) > BIG ? target.y : c.y - size.h / 2;
+    const colX = Math.max(target.w, size.w) > BIG ? target.x : c.x - size.w / 2;
     switch (direction) {
       case "right":
-        return { x: target.x + target.w + GAP, y: c.y - size.h / 2 };
+        return { x: target.x + target.w + GAP, y: rowY };
       case "left":
-        return { x: target.x - GAP - size.w, y: c.y - size.h / 2 };
+        return { x: target.x - GAP - size.w, y: rowY };
       case "below":
-        return { x: c.x - size.w / 2, y: target.y + target.h + GAP_VERTICAL };
+        return { x: colX, y: target.y + target.h + GAP_VERTICAL };
       case "above":
-        return { x: c.x - size.w / 2, y: target.y - GAP_VERTICAL - size.h };
+        return { x: colX, y: target.y - GAP_VERTICAL - size.h };
       default: {
         const _exhaustive: never = direction;
         return _exhaustive;
@@ -146,6 +175,29 @@ export function besideSpot(args: { size: Size; target: Rect; direction: Directio
 /** Whether a rect of `size` at `at` keeps clear of every obstacle. */
 export function isFree(args: { size: Size; at: Point; obstacles: readonly Rect[] }): boolean {
   return !collides({ x: args.at.x, y: args.at.y, w: args.size.w, h: args.size.h }, args.obstacles, MARGIN);
+}
+
+/**
+ * Nudges a spot so its top edge lines up with a neighbour's top, or its left edge with a neighbour's left, when one
+ * is within ALIGN_SNAP. Only snaps that keep clear of every obstacle (by `margin`) are taken; the smallest wins.
+ */
+export function snapAlign(args: { size: Size; at: Point; neighbours: readonly Rect[]; obstacles: readonly Rect[]; margin?: number }): Point {
+  const { size, at, neighbours, obstacles } = args;
+  const margin = args.margin ?? MARGIN;
+  const candidates: Point[] = [];
+  for (const n of neighbours) {
+    const dy = n.y - at.y;
+    const dx = n.x - at.x;
+    if (dy !== 0 && Math.abs(dy) <= ALIGN_SNAP) candidates.push({ x: at.x, y: n.y });
+    if (dx !== 0 && Math.abs(dx) <= ALIGN_SNAP) candidates.push({ x: n.x, y: at.y });
+  }
+  candidates.sort((a, b) => Math.hypot(a.x - at.x, a.y - at.y) - Math.hypot(b.x - at.x, b.y - at.y));
+  const free = (p: Point) => !collides({ x: p.x, y: p.y, w: size.w, h: size.h }, obstacles, margin);
+  // A top snap and a left snap can both apply; try them together first.
+  const top = candidates.find((p) => p.y !== at.y);
+  const left = candidates.find((p) => p.x !== at.x);
+  if (top !== undefined && left !== undefined && free({ x: left.x, y: top.y })) return { x: left.x, y: top.y };
+  return candidates.find(free) ?? at;
 }
 
 /** Beside a target in a direction, nudged sideways (then outward) until it fits. */
@@ -336,7 +388,9 @@ export function settleBlocks(args: { blocks: readonly Block[]; ignore: ReadonlyS
       settled.push(block);
       continue;
     }
-    const at = stepAside(block.rect, obstacles, gap);
+    const stepped = stepAside(block.rect, obstacles, gap);
+    // Line up with what it now sits beside, when that is a small nudge and keeps everything clear.
+    const at = snapAlign({ size: { w: block.rect.w, h: block.rect.h }, at: stepped, neighbours: obstacles, obstacles, margin: gap - 1 });
     moves.set(block.key, { x: at.x - block.rect.x, y: at.y - block.rect.y });
     settled.push({ ...block, rect: { ...block.rect, x: at.x, y: at.y } });
   }
