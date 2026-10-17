@@ -16,6 +16,7 @@ import "./ui/ui.css";
 declare global {
   interface Window {
     rtwBridge?: import("./canvas/bridge").CanvasBridge;
+    rtwApi?: ExcalidrawImperativeAPI;
   }
 }
 
@@ -36,10 +37,12 @@ export default function App() {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     window.rtwBridge = host.bridge;
+    if (api !== null) window.rtwApi = api;
     return () => {
       delete window.rtwBridge;
+      delete window.rtwApi;
     };
-  }, [host]);
+  }, [host, api]);
   useEffect(() => host.bridge.subscribeTitle(setTitle), [host]);
 
   useEffect(() => {

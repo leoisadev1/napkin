@@ -246,20 +246,20 @@ export function buildArrow(args: {
   return { rootId, elements };
 }
 
-type LocalPoint = ExcalidrawArrowElement["points"][number];
+export type LocalPoint = ExcalidrawArrowElement["points"][number];
 
 /** Excalidraw's point brand is nominal; this is the one place plain numbers become a LocalPoint, as in its own pointFrom. */
-function localPoint(x: number, y: number): LocalPoint {
+export function localPoint(x: number, y: number): LocalPoint {
   return [x, y] as LocalPoint;
 }
 
 /**
- * Arrow geometry from (x, y) by (dx, dy), optionally curving through `bend` (relative to the start) so it clears
- * whatever sits on the straight line.
+ * Arrow geometry from (x, y) by (dx, dy), optionally passing through `via` points (relative to the start), which bend
+ * it around obstacles or move its label along the line.
  */
-export function arrowGeometry(args: { x: number; y: number; dx: number; dy: number; bend: { x: number; y: number } | null }) {
+export function arrowGeometry(args: { x: number; y: number; dx: number; dy: number; via: readonly { x: number; y: number }[] }) {
   const end = localPoint(nonZero(args.dx), nonZero(args.dy));
-  const points = args.bend === null ? [localPoint(0, 0), end] : [localPoint(0, 0), localPoint(args.bend.x, args.bend.y), end];
+  const points = [localPoint(0, 0), ...args.via.map((p) => localPoint(p.x, p.y)), end];
   const xs = points.map((p) => p[0]);
   const ys = points.map((p) => p[1]);
   return {

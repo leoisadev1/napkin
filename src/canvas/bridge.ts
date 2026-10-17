@@ -10,9 +10,9 @@ import type { Animator } from "./animator";
 import { createAnimator } from "./animator";
 import type { Built, IdFactory } from "./builders";
 import { arrowGeometry, buildArrow, buildFrame, DORMANT_FRAME_NAME, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
-import type { Outline, Point, Rect } from "./geometry";
+import type { EdgeRoute, Outline, Point, Rect, Segment } from "./geometry";
 import { boundsOf } from "./bounds";
-import { bendAround, center, contains, edgePoint, inflate, overlaps, union } from "./geometry";
+import { boxAround, center, contains, edgePoint, inflate, labelPointOf, overlaps, routeEdge, routeOf, routePoints, segmentsOf, union } from "./geometry";
 import { mimeOf, readImageSize } from "./imageSize";
 import { dedupeNodeIds } from "./identity";
 import type { Block } from "./layout";
@@ -184,7 +184,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let seq = 0;
   let lastPlaced: NodeId | null = null;
   let followTimer: number | null = null;
-  const pendingFollow = new Set<string>();
+  /** Elements the camera should show after the next follow: the new item, and nearby context when it fits. */
+  const pendingFollow = { core: new Set<string>(), context: new Set<string>() };
   /** Dormant frames that got their first child in the current transaction; they fade in after commit. */
   const woken = new Set<string>();
 
@@ -199,6 +200,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   type Tx = { elements: ExcalidrawElement[]; overlapsBefore: Set<string> };
 
   function begin(): Tx {
+    // Anything still gliding jumps to where it is headed, so the transaction reads final positions.
+    animator.finishMotion();
     const elements = [...dedupeNodeIds(api.getSceneElementsIncludingDeleted())];
     return { elements, overlapsBefore: overlappingPairs(blocksOf(elements).map((b) => b.block)) };
   }
@@ -255,10 +258,13 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     rerouteAgentEdges(tx);
     liftHiddenLabels(tx);
     syncBindings(tx);
+    const before = api.getSceneElementsIncludingDeleted();
     api.updateScene({
       elements: tx.elements,
       captureUpdate: capture === "undoable" ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
     });
+    // Things this change pushed aside, frames that grew and re-aimed arrows glide to their new spot.
+    animator.glideFrom(before);
     if (woken.size > 0) {
       const frames = api.getSceneElements().filter((el) => woken.has(el.id));
       woken.clear();
@@ -414,6 +420,41 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     return placed;
   }
 
+  /** Puts freshly built elements at a fixed top-left, inside `frameId` when given. Used to replace a node in place. */
+  function placeAt(tx: Tx, built: Built, keep: { at: Point; frameId: string | null }): ExcalidrawElement[] {
+    const bounds = boundsOf(built.elements) ?? { x: 0, y: 0, w: 0, h: 0 };
+    const frameId = keep.frameId !== null && tx.elements.some((el) => el.id === keep.frameId && !el.isDeleted) ? keep.frameId : null;
+    const placed = built.elements.map((el) => ({ ...el, x: el.x + keep.at.x - bounds.x, y: el.y + keep.at.y - bounds.y, frameId }));
+    insert(tx, placed, frameId);
+    if (frameId !== null) refitFrame(tx, frameId);
+    return placed;
+  }
+
+  /**
+   * After a node inside a frame changed size in place, its siblings step aside (right or down) instead of the node
+   * itself moving, and the frame re-wraps everything.
+   */
+  function settleInside(tx: Tx, frameElementId: string, fixed: NodeId) {
+    const nodes = indexNodes(tx.elements);
+    const order = new Map(tx.elements.map((el, i) => [el.id, i]));
+    const members = [...nodes.values()].filter((n) => n.kind !== "edge" && n.root.frameId === frameElementId);
+    const blocks = members.flatMap((n) => {
+      const rect = nodeRect(n);
+      return rect === null ? [] : [{ key: n.id, rect, movable: n.id !== fixed && n.meta !== null, order: order.get(n.root.id) ?? 0 }];
+    });
+    const moves = settleBlocks({ blocks, ignore: new Set(), gap: 56 });
+    if (moves.size === 0) return;
+    const touched = new Set<NodeId>();
+    for (const n of members) {
+      const delta = moves.get(n.id);
+      if (delta === undefined) continue;
+      for (const el of n.elements) patch(tx, el.id, (current) => translate(current, delta.x, delta.y));
+      touched.add(n.id);
+    }
+    refitFrame(tx, frameElementId);
+    reroute(tx, touched);
+  }
+
   /** Re-wraps a frame around its children after something was placed, moved or removed inside it. */
   function refitFrame(tx: Tx, frameElementId: string) {
     const frame = tx.elements.find((el) => el.id === frameElementId && !el.isDeleted);
@@ -504,12 +545,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       const arrow = entry.root;
       if (entry.kind !== "edge" || arrow.type !== "arrow") continue;
       const label = entry.elements.find((el) => el.type === "text");
-      const last = arrow.points.at(-1);
-      if (label === undefined || last === undefined) continue;
-      // Excalidraw centers a label on the middle point of a bent arrow, or halfway along a straight one.
-      const middle = arrow.points.length === 3 ? arrow.points[1] : undefined;
-      const mid = middle === undefined ? { x: arrow.x + last[0] / 2, y: arrow.y + last[1] / 2 } : { x: arrow.x + middle[0], y: arrow.y + middle[1] };
-      const box = { x: mid.x - label.width / 2, y: mid.y - label.height / 2, w: label.width, h: label.height };
+      const mid = labelPointOf(arrowPoints(arrow));
+      if (label === undefined || mid === null) continue;
+      const box = boxAround(mid, { w: label.width, h: label.height });
       if (solids.some((s) => overlaps(s.rect, box))) lift.push(...entry.elements.map((el) => el.id));
     }
     if (lift.length === 0) return;
@@ -528,36 +566,73 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     return { w: Math.max(...lines.map((l) => l.length)) * 17 * 0.56, h: lines.length * 22 };
   }
 
-  type Route = { start: Point; end: Point; bend: Point | null };
+  type Route = EdgeRoute;
 
-  /** Edge-to-edge line between two nodes, bent around any other node that sits in the way. */
-  function edgeRoute(args: { nodes: ReadonlyMap<NodeId, NodeEntry>; self: NodeId; from: NodeEntry; to: NodeEntry; label: Size }): Route | null {
+  function arrowPoints(arrow: ExcalidrawElement): Point[] {
+    return arrow.type === "arrow" ? arrow.points.map((p) => ({ x: arrow.x + p[0], y: arrow.y + p[1] })) : [];
+  }
+
+  /** Labels and lines of every edge except `self`, plus frame borders, for routing `self` around them. */
+  function surroundings(nodes: ReadonlyMap<NodeId, NodeEntry>, self: NodeId): { labels: Rect[]; lines: Segment[] } {
+    const labels: Rect[] = [];
+    const lines: Segment[] = [];
+    for (const entry of nodes.values()) {
+      if (entry.kind === "frame") {
+        const r = boundsOf([entry.root]);
+        if (r !== null) {
+          const corners = [
+            { x: r.x, y: r.y },
+            { x: r.x + r.w, y: r.y },
+            { x: r.x + r.w, y: r.y + r.h },
+            { x: r.x, y: r.y + r.h },
+          ];
+          lines.push(...segmentsOf([...corners, { x: r.x, y: r.y }]));
+        }
+        continue;
+      }
+      if (entry.kind !== "edge" || entry.id === self) continue;
+      const points = arrowPoints(entry.root);
+      lines.push(...segmentsOf(points));
+      const text = entry.elements.find((el) => el.type === "text");
+      const at = labelPointOf(points);
+      if (text !== undefined && at !== null) labels.push(inflate(boxAround(at, { w: text.width, h: text.height }), 4));
+    }
+    return { labels, lines };
+  }
+
+  /** Edge-to-edge line between two nodes, routed around other nodes and around other edges' labels and lines. */
+  function edgeRoute(args: { nodes: ReadonlyMap<NodeId, NodeEntry>; self: NodeId; from: NodeEntry; to: NodeEntry; label: Size; drawn: Route | null }): Route | null {
     const { nodes, self, from, to, label } = args;
     const a = nodeRect(from.kind === "mockup" || from.kind === "image" ? { ...from, elements: [from.root] } : from);
     const b = nodeRect(to.kind === "mockup" || to.kind === "image" ? { ...to, elements: [to.root] } : to);
     if (a === null || b === null) return null;
-    const straight = {
-      start: edgePoint({ rect: a, outline: outlineOf(from.root), toward: center(b), gap: EDGE_GAP }),
-      end: edgePoint({ rect: b, outline: outlineOf(to.root), toward: center(a), gap: EDGE_GAP }),
-    };
-    const obstacles: Rect[] = [];
+    const ends = (bend: Point | null) => ({
+      start: edgePoint({ rect: a, outline: outlineOf(from.root), toward: bend ?? center(b), gap: EDGE_GAP }),
+      end: edgePoint({ rect: b, outline: outlineOf(to.root), toward: bend ?? center(a), gap: EDGE_GAP }),
+    });
+    const solids: Rect[] = [];
     for (const entry of nodes.values()) {
       if (entry.kind === "edge" || entry.kind === "frame" || entry.id === from.id || entry.id === to.id) continue;
       const rect = nodeRect(entry);
-      if (rect !== null) obstacles.push(inflate(rect, 12));
+      if (rect !== null) solids.push(inflate(rect, 12));
     }
-    // A second edge between the same pair (often the reply direction) bows out so the two labels don't stack.
+    // Mockup and image titles sit outside the root; the label stays off them too.
+    const endRects = [from, to].flatMap((n) => {
+      const r = nodeRect(n);
+      return r === null ? [] : [r];
+    });
+    const { labels, lines } = surroundings(nodes, self);
+    const route = routeEdge({ ends, around: { solids, ends: endRects, labels, lines }, label, current: args.drawn });
+    // A second edge between the same pair (often the reply direction) bows out so the two don't overlap.
     const twin = [...nodes.values()].some((n) => {
       const m = n.meta;
       return n.id !== self && m !== null && m.kind === "edge" && ((m.from === from.id && m.to === to.id) || (m.from === to.id && m.to === from.id));
     });
-    const bend = bendAround({ ...straight, obstacles }) ?? (twin ? bow(straight, label) : null);
-    if (bend === null) return { ...straight, bend: null };
-    return {
-      start: edgePoint({ rect: a, outline: outlineOf(from.root), toward: bend, gap: EDGE_GAP }),
-      end: edgePoint({ rect: b, outline: outlineOf(to.root), toward: bend, gap: EDGE_GAP }),
-      bend,
-    };
+    if (route.bend === null && twin && args.drawn === null) {
+      const bend = bow(ends(null), label);
+      return { ...ends(bend), bend, label: bend };
+    }
+    return route;
   }
 
   /**
@@ -574,8 +649,11 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   }
 
   function routeGeometry(route: Route) {
-    const { start, end, bend } = route;
-    return arrowGeometry({ x: start.x, y: start.y, dx: end.x - start.x, dy: end.y - start.y, bend: bend === null ? null : { x: bend.x - start.x, y: bend.y - start.y } });
+    const [first, ...rest] = routePoints(route);
+    const end = rest.at(-1) ?? route.end;
+    const start = first ?? route.start;
+    const via = rest.slice(0, -1).map((p) => ({ x: p.x - start.x, y: p.y - start.y }));
+    return arrowGeometry({ x: start.x, y: start.y, dx: end.x - start.x, dy: end.y - start.y, via });
   }
 
   function addEdge(tx: Tx, op: Extract<BoardOp, { op: "add_edge" }>): ExcalidrawElement[] {
@@ -583,7 +661,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const from = nodes.get(op.from);
     const to = nodes.get(op.to);
     if (from === undefined || to === undefined || op.from === op.to) return [];
-    const ends = edgeRoute({ nodes, self: op.id, from, to, label: labelSize(op.label) });
+    const ends = edgeRoute({ nodes, self: op.id, from, to, label: labelSize(op.label), drawn: null });
     if (ends === null) return [];
     const geometry = routeGeometry(ends);
     const built = buildArrow({
@@ -627,7 +705,14 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       const to = nodes.get(toId);
       if (from === undefined || to === undefined) continue;
       const text = entry.elements.find((el) => el.type === "text");
-      const ends = edgeRoute({ nodes, self: entry.id, from, to, label: text === undefined ? { w: 0, h: 0 } : { w: text.width, h: text.height } });
+      const ends = edgeRoute({
+        nodes,
+        self: entry.id,
+        from,
+        to,
+        label: text === undefined ? { w: 0, h: 0 } : { w: text.width, h: text.height },
+        drawn: routeOf(arrowPoints(arrow)),
+      });
       if (ends === null) continue;
       const geometry = routeGeometry(ends);
       patch(tx, arrow.id, (el) =>
@@ -669,16 +754,34 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     return { x: rect.x + rect.w * 0.78, y: rect.y + rect.h * 0.82 };
   }
 
-  function announce(placed: readonly ExcalidrawElement[], stagger: "together" | "sequence") {
+  /** Elements of the nodes an edge connects, so following an edge shows both ends when they fit. */
+  function edgeContext(from: NodeId, to: NodeId): string[] {
+    const nodes = indexNodes(api.getSceneElements());
+    return [from, to].flatMap((id) => nodes.get(id)?.elements.map((el) => el.id) ?? []);
+  }
+
+  function scheduleFollow(core: readonly ExcalidrawElement[], context: readonly string[] = []) {
+    for (const el of core) pendingFollow.core.add(el.id);
+    for (const id of context) pendingFollow.context.add(id);
+    if (followTimer !== null) window.clearTimeout(followTimer);
+    followTimer = window.setTimeout(follow, 140);
+  }
+
+  function announce(placed: readonly ExcalidrawElement[], stagger: "together" | "sequence", context: readonly string[] = []) {
     if (placed.length === 0) return;
     const groups = stagger === "sequence" ? placed.map((el) => [el]) : [placed];
     animator.fadeIn(groups, stagger === "sequence" ? Math.max(8, Math.min(45, 900 / placed.length)) : 0);
-    const rect = boundsOf(placed);
-    // Highlight only each node's root element: one outline per item, not one per mockup part.
-    if (rect !== null) animator.pointAt(restingPoint(rect), placed.filter((el) => readMeta(el)?.role === "root").map((el) => el.id));
-    for (const el of placed) pendingFollow.add(el.id);
-    if (followTimer !== null) window.clearTimeout(followTimer);
-    followTimer = window.setTimeout(follow, 140);
+    const roots = placed.filter((el) => readMeta(el)?.role === "root");
+    const isEdge = roots.some((el) => el.type === "arrow");
+    // An edge's own label is where the eye goes; its bounding box would outline half the board, so edges get no outline.
+    // The label's stored x/y are stale (Excalidraw places arrow labels at draw time), so aim at the label spot itself.
+    const placedArrow = roots.find((el) => el.type === "arrow");
+    const arrow = placedArrow === undefined ? undefined : (api.getSceneElements().find((el) => el.id === placedArrow.id) ?? placedArrow);
+    const spot = arrow === undefined ? null : labelPointOf(arrowPoints(arrow));
+    const rect = spot !== null ? { x: spot.x - 30, y: spot.y - 12, w: 60, h: 24 } : boundsOf(placed);
+    // Outline only each node's root element: one tight outline per item, not one per mockup part.
+    if (rect !== null) animator.pointAt(restingPoint(rect), isEdge ? [] : roots.map((el) => el.id));
+    scheduleFollow(placed, context);
   }
 
   type Camera = { cx: number; cy: number; z: number };
@@ -686,15 +789,20 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
   let cameraTarget: Camera | null = null;
 
   /**
-   * Keeps the newest items in view the way a person would: pan the shortest distance at a readable zoom. The zoom
-   * only drops below the minimum when the new item (with its frame, if that stays readable) would not fit.
+   * Keeps the newest item fully inside the safe area (between the toolbar and the dock) the way a person would: pan
+   * the shortest distance at a readable zoom. Context (an edge's two ends, the frame around a new item with its
+   * title) comes along when it fits at a comfortable zoom. The zoom only drops toward the floor when the item itself
+   * needs it, such as a phone mockup taller than the screen.
    */
   function follow() {
     followTimer = null;
-    const scene = api.getSceneElements();
-    const fresh = scene.filter((el) => pendingFollow.has(el.id));
-    pendingFollow.clear();
-    const itemRect = boundsOf(fresh);
+    // Frames may still be growing; judge against where everything is headed.
+    const scene = animator.finalGeometry(api.getSceneElements());
+    const core = scene.filter((el) => pendingFollow.core.has(el.id));
+    const context = scene.filter((el) => pendingFollow.context.has(el.id));
+    pendingFollow.core.clear();
+    pendingFollow.context.clear();
+    const itemRect = boundsOf(core);
     if (itemRect === null) return;
     const state = api.getAppState();
     const limits = followZoom(state.width);
@@ -704,28 +812,38 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     // Mid-glide, judge against where the camera is heading, or a later item would undo the move still in flight.
     const actual: Camera = { cx: -state.scrollX + state.width / 2 / state.zoom.value, cy: -state.scrollY + state.height / 2 / state.zoom.value, z: state.zoom.value };
     const base = cameraFrame !== null && cameraTarget !== null ? cameraTarget : actual;
-    const { cx, cy, z: zoom } = base;
     const viewAt = (z: number, cx: number, cy: number): Rect => {
-      const w = screenW / z;
-      const h = screenH / z;
       // The usable area is offset by the chrome insets; its center is not the window's center.
       const x = cx - state.width / 2 / z + insets.left / z;
       const y = cy - state.height / 2 / z + insets.top / z;
-      return { x, y, w, h };
+      return { x, y, w: screenW / z, h: screenH / z };
     };
-    const margin = limits.margin / zoom;
-    const now = viewAt(zoom, cx, cy);
-    if (contains({ x: now.x + margin, y: now.y + margin, w: now.w - margin * 2, h: now.h - margin * 2 }, itemRect)) return;
-
     const fitsAt = (r: Rect) => Math.min((screenW - limits.margin * 2) / Math.max(r.w, 1), (screenH - limits.margin * 2) / Math.max(r.h, 1));
-    // Show the item with the frame around it, so a flow inside a frame reads as one piece, when that stays readable.
-    const frameIds = new Set(fresh.flatMap((el) => (el.frameId === null ? [] : [el.frameId])));
-    const withFrames = boundsOf([...fresh, ...scene.filter((el) => frameIds.has(el.id))]);
-    const rect = withFrames !== null && fitsAt(withFrames) >= limits.floor ? withFrames : itemRect;
+
+    // Frames around the new item, with the title strip above them.
+    const frameIds = new Set([...core, ...context].flatMap((el) => (el.frameId === null ? [] : [el.frameId])));
+    const frames = scene.flatMap((el) => {
+      const r = frameIds.has(el.id) ? boundsOf([el]) : null;
+      return r === null ? [] : [withTitle(r)];
+    });
+    const contextRect = boundsOf(context);
+    const options = [
+      union([itemRect, ...(contextRect === null ? [] : [contextRect]), ...frames]),
+      contextRect === null ? null : union([itemRect, contextRect]),
+      union([itemRect, ...frames]),
+    ];
+    const rect = options.find((r): r is Rect => r !== null && fitsAt(r) >= limits.min) ?? itemRect;
+
+    const zoom = base.z;
+    const margin = limits.margin / zoom;
+    const now = viewAt(zoom, base.cx, base.cy);
+    if (contains({ x: now.x + margin, y: now.y + margin, w: now.w - margin * 2, h: now.h - margin * 2 }, rect)) return;
+
     let z = Math.min(limits.max, Math.max(limits.min, zoom));
     if (fitsAt(rect) < z) z = Math.max(limits.floor, fitsAt(rect));
-    const view = viewAt(z, cx, cy);
+    const view = viewAt(z, base.cx, base.cy);
     const m = limits.margin / z;
+    // Too big even at the floor: show its top (where a mockup's title and header are), never a slice of the middle.
     const shift = (start: number, size: number, lo: number, len: number) => {
       if (len + 2 * m > size || lo - m < start) return lo - m - start;
       if (lo + len + m > start + size) return lo + len + m - (start + size);
@@ -733,7 +851,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     };
     const dx = shift(view.x, view.w, rect.x, rect.w);
     const dy = shift(view.y, view.h, rect.y, rect.h);
-    glide({ from: actual, to: { cx: cx + dx, cy: cy + dy, z } });
+    glide({ from: actual, to: { cx: base.cx + dx, cy: base.cy + dy, z } });
   }
 
   /** Tweens the camera center and zoom together so the motion reads as one move, not a pan plus a zoom. */
@@ -821,8 +939,10 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       lastPlaced = op.id;
       return;
     }
+    // Re-adding an id replaces the node in place: same top-left, same frame, edges re-attach in finishAdd.
+    const spot = existing === undefined || existing.kind === "frame" ? null : nodeRect(existing);
+    const keep = spot === null || existing === undefined ? null : { at: { x: spot.x, y: spot.y }, frameId: existing.root.frameId };
     if (existing !== undefined) {
-      // Re-adding an id replaces the node in place; edges re-attach below.
       remove(tx, new Set(existing.elements.map((el) => el.id)));
       if (existing.kind === "frame") releaseChildren(tx, existing.root.id);
     }
@@ -858,7 +978,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         // Land where the "Generating image…" card was, if one is showing.
         const pending = pendingCards(tx);
         const slot = pending.find((p) => p.pendingId === op.id) ?? pending[0];
-        if (slot !== undefined && op.placement.kind === "auto") {
+        if (slot !== undefined && op.placement.kind === "auto" && keep === null) {
           remove(tx, new Set(slot.elementIds));
           animator.stopPulse(slot.elementIds);
           const bounds = boundsOf(built.elements);
@@ -884,7 +1004,8 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
       }
     }
     if (placement.kind === "near" && placement.target === op.id) placement = { kind: "auto" };
-    const placed = place(tx, built, placement);
+    const placed = keep === null ? place(tx, built, placement) : placeAt(tx, built, keep);
+    if (keep !== null && keep.frameId !== null) settleInside(tx, keep.frameId, op.id);
     finishAdd(tx, op.id, placed, existing !== undefined);
   }
 
@@ -895,7 +1016,9 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   function finishAdd(tx: Tx, nodeId: NodeId, placed: readonly ExcalidrawElement[], replaced: boolean) {
     if (replaced) reroute(tx, new Set([nodeId]));
-    markPlaced(nodeId);
+    // A replaced node keeps its place in line, so its neighbours make room rather than it wandering off.
+    if (!replaced) markPlaced(nodeId);
+    else if (!placedOrder.has(nodeId)) placedOrder.set(nodeId, -2e6);
     commit(tx);
     lastPlaced = nodeId;
     // A dormant frame has nothing to show yet; its first child announces it.
@@ -1018,9 +1141,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     const placed = tx.elements.filter((el) => own.has(el.id));
     const bounds = boundsOf(placed);
     if (bounds !== null) animator.pointAt(restingPoint(bounds), []);
-    for (const el of placed) pendingFollow.add(el.id);
-    if (followTimer !== null) window.clearTimeout(followTimer);
-    followTimer = window.setTimeout(follow, 140);
+    scheduleFollow(placed);
   }
 
   function apply(op: BoardOp) {
@@ -1038,7 +1159,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         const placed = addEdge(tx, op);
         if (placed.length === 0) return;
         commit(tx);
-        announce(placed, "together");
+        announce(placed, "together", edgeContext(op.from, op.to));
         return;
       }
       case "update":
@@ -1121,9 +1242,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     animator.pulse(placed.map((el) => el.id));
     const rect = boundsOf(placed);
     if (rect !== null) animator.pointAt(restingPoint(rect), []);
-    for (const el of placed) pendingFollow.add(el.id);
-    if (followTimer !== null) window.clearTimeout(followTimer);
-    followTimer = window.setTimeout(follow, 140);
+    scheduleFollow(placed);
   }
 
   function clearPending(id: string) {
