@@ -32,6 +32,37 @@ export const MockupComponent = z.object({
 });
 export type MockupComponent = z.infer<typeof MockupComponent>;
 
+export const DiagramKind = z.enum([
+  /** Left-to-right process; links optional (defaults to node order). Diamonds read as decisions. */
+  "flow",
+  /** Closed loop: nodes on a circle, arrows around it in order. */
+  "cycle",
+  /** Top-down hierarchy using `parent`. */
+  "tree",
+  /** Radial: the node with parent null is the center, others branch out via `parent`. */
+  "mindmap",
+  /** Horizontal line with nodes as milestones in order. */
+  "timeline",
+  /** Stacked narrowing stages, widest first. */
+  "funnel",
+  /** 2x2 grid: first four nodes are the quadrants (top-left, top-right, bottom-left, bottom-right); `axes` labels x and y. */
+  "quadrant",
+]);
+export type DiagramKind = z.infer<typeof DiagramKind>;
+
+export const DiagramNode = z.object({
+  id: NodeId,
+  label: z.string().max(120),
+  color: Color,
+  shape: z.enum(["box", "ellipse", "diamond", "sticky"]),
+  /** Parent node id for tree and mindmap; null for the root and for other kinds. */
+  parent: NodeId.nullable(),
+});
+export type DiagramNode = z.infer<typeof DiagramNode>;
+
+export const DiagramLink = z.object({ from: NodeId, to: NodeId, label: z.string().max(60) });
+export type DiagramLink = z.infer<typeof DiagramLink>;
+
 export const BoardOp = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("add_shape"),
@@ -63,6 +94,19 @@ export const BoardOp = z.discriminatedUnion("op", [
     placement: Placement,
   }),
   z.object({
+    /** A laid-out diagram. Re-adding an existing id replaces it in place. Node ids are addressable like shapes. */
+    op: z.literal("add_diagram"),
+    id: NodeId,
+    kind: DiagramKind,
+    title: z.string().max(80),
+    nodes: z.array(DiagramNode).min(2).max(14),
+    /** Extra or explicit links. For flow, empty means sequential. Ignored for cycle/timeline/funnel/quadrant ordering. */
+    links: z.array(DiagramLink).max(24),
+    /** Axis labels for quadrant: [x, y]. Empty otherwise. */
+    axes: z.array(z.string().max(40)).max(2),
+    placement: Placement,
+  }),
+  z.object({
     op: z.literal("add_image"),
     id: NodeId,
     /** Short caption shown under the image. */
@@ -87,7 +131,7 @@ export type BoardOp = z.infer<typeof BoardOp>;
 /** Compact view of the board that the client sends with every turn so the agent can reference items. */
 export const BoardItem = z.object({
   id: NodeId,
-  kind: z.enum(["shape", "edge", "frame", "mockup", "image"]),
+  kind: z.enum(["shape", "edge", "frame", "mockup", "image", "diagram"]),
   label: z.string(),
   /** Frame id when the item sits inside a frame. */
   frame: NodeId.nullable(),

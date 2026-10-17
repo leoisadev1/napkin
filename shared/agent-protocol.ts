@@ -15,8 +15,10 @@ export const AgentRequest = z.object({
    * "live": a phrase streamed while the user keeps talking; draw only what this phrase adds, fast, no reply.
    * "turn": an explicit typed message or a tapped suggestion.
    * "suggest": the user paused; draw nothing, only return a fresh `suggestions` event (utterance is the last stretch said).
+   * "refine": the user paused; restructure what was sketched live into proper diagrams, fix mis-heard labels, fill gaps,
+   *   optionally add one concept image. Runs with more reasoning than live; may delete and replace items.
    */
-  mode: z.enum(["live", "turn", "suggest"]),
+  mode: z.enum(["live", "turn", "suggest", "refine"]),
   /** Recent conversation, oldest first, at most 20 turns. */
   history: z.array(ChatTurn).max(20),
   board: BoardSummary,
