@@ -1532,7 +1532,17 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         const doomed = deletionSet(tx, op.ids);
         if (doomed.size === 0) return;
         rememberDeparted(nodes, doomed);
+        // Frames emptied by this delete (a refine moving their contents into a diagram) go too, not linger empty.
+        const touchedFrames = new Set<string>();
+        for (const el of tx.elements) if (doomed.has(el.id) && el.frameId !== null) touchedFrames.add(el.frameId);
         remove(tx, doomed);
+        const emptied = new Set<string>();
+        for (const frameId of touchedFrames) {
+          if (tx.elements.some((el) => !el.isDeleted && el.frameId === frameId)) continue;
+          const frame = tx.elements.find((el) => el.id === frameId && !el.isDeleted);
+          if (frame !== undefined && readMeta(frame) !== null) emptied.add(frameId);
+        }
+        if (emptied.size > 0) remove(tx, emptied);
         const relaid = [...shrinking].flatMap(([diagramId, at]) => reshape(tx, diagramId, at, (spec) => spec) ?? []);
         commit(tx, "undoable", { ghosts: true, glideMs: 460 });
         for (const laid of relaid) playEntry(laid);
