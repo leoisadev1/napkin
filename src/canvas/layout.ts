@@ -1,7 +1,7 @@
 // Auto-layout: turn a semantic Placement into a top-left position that does not collide with the board.
 import type { Direction } from "../../shared/board";
 import type { Point, Rect } from "./geometry";
-import { center, contains, inflate, overlaps, union } from "./geometry";
+import { center, inflate, overlaps, union } from "./geometry";
 
 /** Room between neighbors; wide enough that a labeled arrow between them stays readable. */
 const GAP = 120;
@@ -24,8 +24,9 @@ function collides(rect: Rect, obstacles: readonly Rect[], margin: number): boole
  */
 export function nearestFree(args: { size: Size; preferred: Point; obstacles: readonly Rect[] }): Point {
   const { size, preferred, obstacles } = args;
+  const margin = MARGIN;
   const at = (p: Point): Rect => ({ x: p.x, y: p.y, w: size.w, h: size.h });
-  if (!collides(at(preferred), obstacles, MARGIN)) return preferred;
+  if (!collides(at(preferred), obstacles, margin)) return preferred;
   const step = 32;
   for (let ring = 1; ring <= 160; ring++) {
     const candidates: Point[] = [];
@@ -42,7 +43,7 @@ export function nearestFree(args: { size: Size; preferred: Point; obstacles: rea
       }
     }
     candidates.sort((a, b) => Math.hypot(a.x - preferred.x, a.y - preferred.y) - Math.hypot(b.x - preferred.x, b.y - preferred.y));
-    const hit = candidates.find((p) => !collides(at(p), obstacles, MARGIN));
+    const hit = candidates.find((p) => !collides(at(p), obstacles, margin));
     if (hit !== undefined) return hit;
   }
   return preferred;
@@ -54,16 +55,19 @@ export function placeAuto(args: { size: Size; anchor: Rect | null; viewportCente
   const preferred =
     anchor === null
       ? { x: viewportCenter.x - size.w / 2, y: viewportCenter.y - size.h / 2 }
-      : { x: anchor.x + anchor.w + GAP, y: anchor.y + anchor.h / 2 - size.h / 2 };
+      : {
+          x: anchor.x + anchor.w + GAP,
+          // Big blocks (frames, mockups) line up along the top; small shapes line up on their centers.
+          y: Math.max(anchor.h, size.h) > 200 ? anchor.y : anchor.y + anchor.h / 2 - size.h / 2,
+        };
   return nearestFree({ size, preferred, obstacles });
 }
 
-/** Beside a target in a direction, nudged sideways (then outward) until it fits. */
-export function placeNear(args: { size: Size; target: Rect; direction: Direction; obstacles: readonly Rect[] }): Point {
-  const { size, target, direction, obstacles } = args;
+/** The spot directly beside a target, before any collision handling. */
+export function besideSpot(args: { size: Size; target: Rect; direction: Direction }): Point {
+  const { size, target, direction } = args;
   const c = center(target);
-  const horizontal = direction === "left" || direction === "right";
-  const base: Point = (() => {
+  return (() => {
     switch (direction) {
       case "right":
         return { x: target.x + target.w + GAP, y: c.y - size.h / 2 };
@@ -79,6 +83,18 @@ export function placeNear(args: { size: Size; target: Rect; direction: Direction
       }
     }
   })();
+}
+
+/** Whether a rect of `size` at `at` keeps clear of every obstacle. */
+export function isFree(args: { size: Size; at: Point; obstacles: readonly Rect[] }): boolean {
+  return !collides({ x: args.at.x, y: args.at.y, w: args.size.w, h: args.size.h }, args.obstacles, MARGIN);
+}
+
+/** Beside a target in a direction, nudged sideways (then outward) until it fits. */
+export function placeNear(args: { size: Size; target: Rect; direction: Direction; obstacles: readonly Rect[] }): Point {
+  const { size, direction, obstacles } = args;
+  const horizontal = direction === "left" || direction === "right";
+  const base = besideSpot(args);
   const outward = { x: direction === "right" ? 1 : direction === "left" ? -1 : 0, y: direction === "below" ? 1 : direction === "above" ? -1 : 0 };
   const sideStep = (horizontal ? size.h : size.w) / 2 + MARGIN;
   for (let push = 0; push < 6; push++) {
@@ -109,36 +125,162 @@ export function fitFrame(frame: Rect, children: readonly Rect[]): Rect {
   return { x, y, w: right - x, h: bottom - y };
 }
 
+/** Horizontal room between columns inside a frame: enough for a wrapped arrow label. */
+const COL_GAP = 150;
+/** Vertical room between rows inside a frame. */
+const ROW_GAP = 104;
+/** Columns closer than this in height count as level, so rows stay aligned. */
+const LEVEL = 48;
+
 /**
- * Reading-order first fit inside a frame. Returns the position and the frame rect grown to contain it.
- * Rows may extend past the frame up to FRAME_MAX_WIDTH, which makes frames grow sideways before downward.
+ * Two-column snake layout inside a frame. Items fill left, right, then the next row right to left, so a chain of
+ * items always lands next to its predecessor and a four-step loop forms a square instead of crossing diagonals.
+ * A tall item (a phone mockup) makes its column long; following items fill the short column first.
+ * `items` are the frame's existing nodes in creation order. Falls back to first fit when the slot is taken.
  */
-export function placeInside(args: { size: Size; frame: Rect; children: readonly Rect[] }): { at: Point; frame: Rect } {
-  const { size, frame, children } = args;
+export function placeInside(args: { size: Size; frame: Rect; items: readonly Rect[] }): Point {
+  const { size, frame, items } = args;
+  const left = frame.x + FRAME_PAD;
+  const top = frame.y + FRAME_PAD;
+  const first = items[0];
+  if (first === undefined) return { x: left, y: top };
+
+  // Column 0 is everything that shares horizontal span with the leftmost item; the rest is column 1.
+  const minX = Math.min(...items.map((r) => r.x));
+  const leftmost = items.find((r) => r.x === minX) ?? first;
+  const inCol0 = (r: Rect) => r.x < leftmost.x + leftmost.w;
+  const col0 = items.filter(inCol0);
+  const col1 = items.filter((r) => !inCol0(r));
+  const bottomOf = (col: readonly Rect[]) => (col.length === 0 ? null : Math.max(...col.map((r) => r.y + r.h)));
+  const b0 = bottomOf(col0);
+  const b1 = bottomOf(col1);
+
+  const n = items.length;
+  const row = Math.floor(n / 2);
+  const snake = row % 2 === 0 ? n % 2 : 1 - (n % 2);
+  let col: 0 | 1;
+  if (b1 === null) col = 1;
+  else if (b0 === null) col = 0;
+  else if (Math.abs(b0 - b1) < LEVEL) col = snake === 0 ? 0 : 1;
+  else col = b0 < b1 ? 0 : 1;
+
+  const col0Right = Math.max(...col0.map((r) => r.x + r.w), left);
+  const col1Left = col0Right + COL_GAP;
+  const anchor = (col === 0 ? col0 : col1)[0];
+  const x =
+    anchor === undefined
+      ? col === 0
+        ? left
+        : col1Left
+      : Math.max(col === 0 ? minX : col1Left, anchor.x + anchor.w / 2 - size.w / 2);
+  // Level columns share a row line so the grid reads as rows.
+  const below = (col === 0 ? b0 : b1) ?? top - ROW_GAP;
+  const level = b0 !== null && b1 !== null && Math.abs(b0 - b1) < LEVEL;
+  const y = (level ? Math.max(b0, b1) : below) + ROW_GAP;
+  const slot = { x, y: col === 1 && b1 === null ? first.y : y, w: size.w, h: size.h };
+  if (!collides(slot, items, FRAME_PAD)) return { x: slot.x, y: slot.y };
+  return firstFit({ size, frame, items });
+}
+
+/** Reading-order first fit; rows may extend past the frame up to FRAME_MAX_WIDTH. */
+function firstFit(args: { size: Size; frame: Rect; items: readonly Rect[] }): Point {
+  const { size, frame, items } = args;
   const left = frame.x + FRAME_PAD;
   const top = frame.y + FRAME_PAD;
   const rowLimit = frame.x + Math.max(frame.w, Math.min(FRAME_MAX_WIDTH, frame.w + size.w + FRAME_GAP)) - FRAME_PAD;
-  const occupied = union(children);
+  const occupied = union(items);
   const bottomLimit = Math.max(frame.y + frame.h - FRAME_PAD, occupied === null ? top : occupied.y + occupied.h);
   const step = 16;
-  let at: Point | null = null;
-  for (let y = top; y + size.h <= bottomLimit + step && at === null; y += step) {
+  for (let y = top; y + size.h <= bottomLimit + step; y += step) {
     for (let x = left; x + size.w <= rowLimit; x += step) {
-      const r = { x, y, w: size.w, h: size.h };
-      if (!collides(r, children, FRAME_GAP - 1)) {
-        at = { x, y };
-        break;
-      }
+      if (!collides({ x, y, w: size.w, h: size.h }, items, FRAME_GAP - 1)) return { x, y };
     }
   }
-  if (at === null) at = { x: left, y: occupied === null ? top : occupied.y + occupied.h + FRAME_GAP };
-  const placed = { x: at.x, y: at.y, w: size.w, h: size.h };
-  const needed = union([...children, placed]) ?? placed;
-  const grown = {
-    x: frame.x,
-    y: frame.y,
-    w: Math.max(frame.w, needed.x + needed.w + FRAME_PAD - frame.x),
-    h: Math.max(frame.h, needed.y + needed.h + FRAME_PAD - frame.y),
+  return { x: left, y: occupied === null ? top : occupied.y + occupied.h + FRAME_GAP };
+}
+
+// ---- Settling top-level blocks ------------------------------------------------------------------
+
+/** A top-level thing on the board: a frame with its contents, or a loose node. */
+export type Block = {
+  key: string;
+  rect: Rect;
+  /** User-drawn blocks never move; agent blocks yield to them. */
+  movable: boolean;
+  /** Creation order: earlier blocks keep their spot, later ones step aside. */
+  order: number;
+};
+
+/** Room kept between top-level blocks, wide enough for a labeled arrow to cross. */
+export const BLOCK_GAP = 96;
+
+export function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Pairs of blocks that overlap (with the gap) right now. */
+export function overlappingPairs(blocks: readonly Block[], gap: number = BLOCK_GAP): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < blocks.length; i++) {
+    for (let j = i + 1; j < blocks.length; j++) {
+      const a = blocks[i];
+      const b = blocks[j];
+      if (a !== undefined && b !== undefined && overlaps(inflate(a.rect, gap - 1), b.rect)) out.add(pairKey(a.key, b.key));
+    }
+  }
+  return out;
+}
+
+/**
+ * Slides a rect right or down until it clears every obstacle. Only forward in reading order, so a block never jumps
+ * above or before the things that came before it. A block that sits beside what it hit keeps going sideways and one
+ * that sits below keeps going down, so rows stay rows; otherwise the shorter slide wins.
+ */
+function stepAside(rect: Rect, obstacles: readonly Rect[], gap: number): Point {
+  const slide = (axis: "x" | "y"): Point => {
+    const r = { ...rect };
+    for (let i = 0; i <= obstacles.length; i++) {
+      const hits = obstacles.filter((o) => overlaps(inflate(r, gap - 1), o));
+      if (hits.length === 0) break;
+      if (axis === "x") r.x = Math.max(...hits.map((o) => o.x + o.w)) + gap;
+      else r.y = Math.max(...hits.map((o) => o.y + o.h)) + gap;
+    }
+    return { x: r.x, y: r.y };
   };
-  return { at, frame: contains(frame, placed) ? frame : grown };
+  const right = slide("x");
+  const down = slide("y");
+  const hit = obstacles.find((o) => overlaps(inflate(rect, gap - 1), o));
+  if (hit !== undefined) {
+    const c = center(rect);
+    const o = center(hit);
+    // Offsets relative to the combined size, so a wide frame beside a tall one still reads as "beside".
+    const across = (c.x - o.x) / (rect.w + hit.w);
+    const along = (c.y - o.y) / (rect.h + hit.h);
+    if (across > 0 && across >= along) return right;
+    if (along > 0 && along > across) return down;
+  }
+  return right.x - rect.x <= down.y - rect.y ? right : down;
+}
+
+/**
+ * Resolves overlaps between top-level blocks by sliding the later block of each clash right or down.
+ * Pairs in `ignore` (overlaps that existed before this change, usually the user's doing) are left alone.
+ * Returns the offset for every block that moved.
+ */
+export function settleBlocks(args: { blocks: readonly Block[]; ignore: ReadonlySet<string>; gap?: number }): Map<string, Point> {
+  const gap = args.gap ?? BLOCK_GAP;
+  const ordered = [...args.blocks].sort((a, b) => (a.movable === b.movable ? a.order - b.order : a.movable ? 1 : -1));
+  const settled: Block[] = [];
+  const moves = new Map<string, Point>();
+  for (const block of ordered) {
+    const obstacles = settled.filter((s) => !args.ignore.has(pairKey(s.key, block.key))).map((s) => s.rect);
+    if (!block.movable || !collides(block.rect, obstacles, gap - 1)) {
+      settled.push(block);
+      continue;
+    }
+    const at = stepAside(block.rect, obstacles, gap);
+    moves.set(block.key, { x: at.x - block.rect.x, y: at.y - block.rect.y });
+    settled.push({ ...block, rect: { ...block.rect, x: at.x, y: at.y } });
+  }
+  return moves;
 }

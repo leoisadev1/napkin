@@ -2,7 +2,6 @@
 // customData is untyped scene data (users can paste anything), so it is parsed with zod on every read.
 import { z } from "zod";
 import { Color, NodeId, ShapeKind } from "../../shared/board";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 
 const Role = z.enum(["root", "part"]);
 
@@ -21,9 +20,9 @@ export type NodeKind = Exclude<NodeMeta["kind"], "pending">;
 const Envelope = z.object({ rtw: NodeMeta });
 
 // Excalidraw replaces element objects on every change, so caching by object identity is safe.
-const cache = new WeakMap<ExcalidrawElement, NodeMeta | null>();
+const cache = new WeakMap<object, NodeMeta | null>();
 
-export function readMeta(element: ExcalidrawElement): NodeMeta | null {
+export function readMeta(element: { readonly customData?: unknown }): NodeMeta | null {
   const hit = cache.get(element);
   if (hit !== undefined) return hit;
   const parsed = Envelope.safeParse(element.customData);
