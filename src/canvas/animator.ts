@@ -8,6 +8,7 @@ import type { LocalPoint } from "./builders";
 import { localPoint } from "./builders";
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from "@excalidraw/excalidraw/types";
 import type { Point } from "./geometry";
+import { metaData, readMeta } from "./meta";
 
 const FADE_MS = 280;
 const CURSOR_MS = 560;
@@ -17,11 +18,17 @@ const PULSE_MS = 1600;
 const HIGHLIGHT_MS = 1500;
 /** Neighbours making room and frames growing: quick enough to keep up with speech, slow enough to follow. */
 const GLIDE_MS = 340;
+/** Deleted things fade a little slower than new ones arrive, so a refine reads as a transformation. */
+const EXIT_MS = 360;
+/** A connector drawing itself from its start to its end. */
+const DRAW_MS = 360;
 
 type Points = readonly LocalPoint[];
 /** The part of an element that a glide moves. */
 type Geometry = { x: number; y: number; width: number; height: number; points: Points | null };
-type Glide = { from: Geometry; to: Geometry; start: number };
+type Glide = { from: Geometry; to: Geometry; start: number; ms: number };
+/** A ghost copy of something deleted, fading out before it is removed for good. */
+type Exit = { start: number; from: number };
 
 function geometryOf(el: ExcalidrawElement): Geometry {
   return { x: el.x, y: el.y, width: el.width, height: el.height, points: el.type === "arrow" || el.type === "line" ? el.points : null };
@@ -79,6 +86,8 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
   const fades = new Map<string, Fade>();
   const pulses = new Set<string>();
   const glides = new Map<string, Glide>();
+  const exits = new Map<string, Exit>();
+  let ghostSeq = 0;
   let cursor: CursorState | null = null;
   let frame: number | null = null;
   const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -100,7 +109,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
   function geometryAt(el: ExcalidrawElement, now: number): Geometry | null {
     const glide = glides.get(el.id);
     if (glide === undefined) return null;
-    const t = Math.min(1, Math.max(0, (now - glide.start) / GLIDE_MS));
+    const t = Math.min(1, Math.max(0, (now - glide.start) / glide.ms));
     if (t >= 1) glides.delete(el.id);
     return between(glide.from, glide.to, easeOut(t));
   }
@@ -110,11 +119,23 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     return el.type === "arrow" || el.type === "line" ? newElementWith(el, { ...base, points: [...(g.points ?? el.points)] }) : newElementWith(el, base);
   }
 
+  const busy = () => fades.size > 0 || pulses.size > 0 || glides.size > 0 || exits.size > 0;
+
   function tick(now: number) {
     frame = null;
-    if (fades.size > 0 || pulses.size > 0 || glides.size > 0) {
+    if (busy()) {
       let changed = false;
       const elements = api.getSceneElementsIncludingDeleted().map((el) => {
+        const exit = exits.get(el.id);
+        if (exit !== undefined) {
+          changed = true;
+          const t = Math.min(1, Math.max(0, (now - exit.start) / EXIT_MS));
+          if (t >= 1) {
+            exits.delete(el.id);
+            return newElementWith(el, { isDeleted: true });
+          }
+          return newElementWith(el, { opacity: Math.round(exit.from * (1 - easeOut(t))) });
+        }
         const opacity = opacityAt(el, now);
         const geometry = geometryAt(el, now);
         if ((opacity === null || opacity === el.opacity) && geometry === null) return el;
@@ -123,24 +144,26 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
         return opacity === null || opacity === el.opacity ? moved : newElementWith(moved, { opacity });
       });
       // Drop ids that vanished (deleted by the user mid-fade).
-      const live = new Set(elements.map((el) => el.id));
+      const live = new Set(elements.filter((el) => !el.isDeleted).map((el) => el.id));
       for (const id of fades.keys()) if (!live.has(id)) fades.delete(id);
       for (const id of pulses) if (!live.has(id)) pulses.delete(id);
       for (const id of glides.keys()) if (!live.has(id)) glides.delete(id);
+      for (const id of exits.keys()) if (!live.has(id)) exits.delete(id);
       if (changed) api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER });
     }
     if (cursor !== null) renderCursor(now);
-    if (fades.size > 0 || pulses.size > 0 || glides.size > 0 || cursor !== null) schedule();
+    if (busy() || cursor !== null) schedule();
   }
 
   /**
-   * Call right after committing a change. Every element that already existed in `before` and changed place or size
-   * is put back where it was and glides to the committed spot. The committed state stays the real one: undo, other
-   * transactions (after finishMotion) and the camera (through finalGeometry) all see the end positions.
+   * Call right after committing a change. Every element that already existed in `before` (or in `extra`, copies of
+   * things deleted a moment ago that came back under the same id) and changed place or size is put back where it was
+   * and glides to the committed spot. The committed state stays the real one: undo, other transactions (after
+   * finishMotion) and the camera (through finalGeometry) all see the end positions.
    */
-  function glideFrom(before: readonly ExcalidrawElement[]) {
+  function glideFrom(before: readonly ExcalidrawElement[], extra: readonly ExcalidrawElement[] = [], ms: number = GLIDE_MS) {
     if (reduced()) return;
-    const prior = new Map(before.filter((el) => !el.isDeleted).map((el) => [el.id, el]));
+    const prior = new Map([...extra, ...before.filter((el) => !el.isDeleted)].map((el) => [el.id, el]));
     const now = performance.now();
     let any = false;
     const elements = api.getSceneElementsIncludingDeleted().map((el) => {
@@ -149,13 +172,82 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
       const from = geometryOf(old);
       const to = geometryOf(el);
       if (sameGeometry(from, to)) return el;
-      glides.set(el.id, { from, to, start: now });
+      glides.set(el.id, { from, to, start: now, ms });
       any = true;
       return withGeometry(el, from);
     });
     if (!any) return;
     api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER });
     schedule();
+  }
+
+  /**
+   * Choreographed entrance: each step's elements fade in at its delay; "draw" steps also grow their lines from the
+   * first point to the last, like a pen stroke.
+   */
+  function enter(steps: readonly { elementIds: readonly string[]; delay: number; draw: boolean }[]) {
+    if (reduced() || steps.length === 0) return;
+    const now = performance.now();
+    const plan = new Map<string, { delay: number; draw: boolean }>();
+    for (const step of steps) for (const id of step.elementIds) plan.set(id, { delay: step.delay, draw: step.draw });
+    const elements = api.getSceneElementsIncludingDeleted().map((el) => {
+      const p = plan.get(el.id);
+      if (p === undefined || el.isDeleted) return el;
+      fades.set(el.id, { start: now + p.delay, target: el.opacity });
+      if (p.draw && (el.type === "arrow" || el.type === "line") && el.points.length >= 2) {
+        const to = geometryOf(el);
+        const first = el.points[0] ?? localPoint(0, 0);
+        const from: Geometry = { ...to, width: 0, height: 0, points: el.points.map(() => localPoint(first[0], first[1])) };
+        glides.set(el.id, { from, to, start: now + p.delay, ms: DRAW_MS });
+        return newElementWith(withGeometry(el, from), { opacity: 0 });
+      }
+      return newElementWith(el, { opacity: 0 });
+    });
+    api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER });
+    schedule();
+  }
+
+  /**
+   * Fading copies of elements that were just deleted, added outside undo history. Bound labels stay attached to their
+   * copied container; arrows lose their bindings.
+   */
+  function fadeOutCopies(removed: readonly ExcalidrawElement[]) {
+    if (reduced() || removed.length === 0) return;
+    const now = performance.now();
+    const stamp = (ghostSeq++).toString(36);
+    const ghostId = (id: string) => `ghost~${stamp}~${id}`;
+    const ids = new Set(removed.map((el) => el.id));
+    const copies = removed.map((el): ExcalidrawElement => {
+      const base = {
+        ...el,
+        id: ghostId(el.id),
+        groupIds: [],
+        frameId: null,
+        locked: true,
+        isDeleted: false,
+        customData: metaData({ kind: "ghost", role: "part", source: el.id }),
+        boundElements: (el.boundElements ?? []).filter((b) => b.type === "text" && ids.has(b.id)).map((b) => ({ ...b, id: ghostId(b.id) })),
+      };
+      exits.set(base.id, { start: now, from: el.opacity });
+      if (base.type === "text") return { ...base, containerId: base.containerId !== null && ids.has(base.containerId) ? ghostId(base.containerId) : null };
+      if (base.type === "arrow") return { ...base, startBinding: null, endBinding: null };
+      return base;
+    });
+    api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...copies], captureUpdate: CaptureUpdateAction.NEVER });
+    schedule();
+  }
+
+  /** Removes the fading copies of `sourceIds` at once, for things that are about to come back under the same id. */
+  function dropGhosts(sourceIds: ReadonlySet<string>) {
+    let any = false;
+    const elements = api.getSceneElementsIncludingDeleted().map((el) => {
+      const meta = readMeta(el);
+      if (el.isDeleted || meta === null || meta.kind !== "ghost" || !sourceIds.has(meta.source)) return el;
+      exits.delete(el.id);
+      any = true;
+      return newElementWith(el, { isDeleted: true });
+    });
+    if (any) api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER });
   }
 
   /** Snaps every glide to its end, so the scene holds final positions before a transaction reads it. */
@@ -252,8 +344,9 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     fades.clear();
     pulses.clear();
     glides.clear();
+    exits.clear();
     cursor = null;
   }
 
-  return { fadeIn, pulse, stopPulse, pointAt, glideFrom, finishMotion, finalGeometry, dispose };
+  return { fadeIn, pulse, stopPulse, pointAt, glideFrom, enter, fadeOutCopies, dropGhosts, finishMotion, finalGeometry, dispose };
 }

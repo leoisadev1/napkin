@@ -63,12 +63,12 @@ export function dedupeNodeIds<E extends IdentityElement>(elements: readonly E[])
     for (const [index, root] of list.entries()) {
       nodeOfRoot.set(root.id, id);
       const meta = readMeta(root);
-      if (index === 0 || meta === null || meta.kind === "pending") continue;
+      if (index === 0 || meta === null || meta.kind === "pending" || meta.kind === "ghost") continue;
       const next = freshId(id, taken);
       nodeOfRoot.set(root.id, next);
       for (const el of [root, ...(parts.get(id) ?? []).filter((p) => belongsTo(p, root))]) {
         const own = readMeta(el);
-        if (own !== null && own.kind !== "pending") rewrites.set(el.id, { element: el, meta: { ...own, nodeId: next } });
+        if (own !== null && own.kind !== "pending" && own.kind !== "ghost") rewrites.set(el.id, { element: el, meta: { ...own, nodeId: next } });
       }
     }
   }
