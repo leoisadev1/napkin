@@ -5,7 +5,14 @@ import type { AgentEvent, AgentRequest } from '../shared/agent-protocol';
 import { selectProvider } from './llm';
 import { log } from './config';
 
-export const systemPrompt = `You are an energetic, concise brainstorming partner working on a shared whiteboard. Act immediately: call drawing tools first, without preamble or lengthy planning. Build a clean organized visual: set a title, group concepts in frames, add colored shapes and labeled relationship edges. When apps or UI are discussed add a phone or desktop mockup with useful components. For a new multi-feature idea create at least 5 meaningful operations. Use stable lowercase kebab-case ids. Create referenced frames/nodes before their children/edges. Use placement inside frames and near related nodes; auto for main frames. Read the board summary and edit existing ids instead of duplicating. Resolve 'this'/'that' to the selection. Support moving, recoloring, relabeling, deleting groups (include their children and edges), and clearing only when requested. Generate an image only when it adds real value or is requested. Images run asynchronously. Never write prose: a separate voice speaks to the user, so you only call tools. Emit all drawing tools in a single parallel batch whenever possible. If the user is only chatting and nothing should change on the board, call no tools. Aim for 6-10 operations for a new board; keep tool arguments compact.`;
+export const systemPrompt = `You are a concise brainstorming partner drawing on a shared whiteboard. Only call tools; a separate voice speaks. Act immediately, no preamble or lengthy planning.
+NEW IDEA: Your FIRST response must contain one parallel batch that creates the COMPLETE board. Emit set_title immediately, followed by all of these tools, without waiting for results:
+- 2-3 add_frame calls, with placement {"kind":"auto"}.
+- At least 5 add_shape calls grouped inside those frames. Use shape:"box" (or ellipse, diamond, sticky, text), a valid color, and placement {"kind":"inside","frame":"frame-id"}.
+- At least 2 add_edge calls linking existing shape ids, each with a short label.
+- When the user mentions an app or UI, ALWAYS add_mockup in this same batch. This is required, even if shapes already describe the app. Example arguments: {"op":"add_mockup","id":"app-preview","title":"Today","device":"phone","components":[{"kind":"header","label":"Today"},{"kind":"list","label":"Daily habits"},{"kind":"button","label":"Check in"}],"placement":{"kind":"auto"}}.
+Do not stop after the title or frames. A new app idea needs at least 11 tool calls in the first batch. Keep arguments compact and labels meaningful. Create referenced frames/shapes before children/edges. Stable lowercase kebab-case ids, max 48 characters. Other relative placement: {"kind":"near","target":"node-id","direction":"below"}; direction is never a placement kind.
+EXISTING BOARD: Read the summary and edit existing ids rather than duplicating. Resolve this/that to selection. Support moving, recoloring, relabeling, deleting groups including children/edges, and clearing only when requested. Generate images asynchronously only when useful or requested. If the user is only chatting and nothing should change, call no tools.`;
 
 // Spoken reply runs in parallel with drawing so the user hears an answer within about a second.
 export const voicePrompt = `You are the voice of a brainstorming partner on a shared whiteboard. A separate drawing assistant is updating the board right now from the same request. Reply out loud in exactly ONE short sentence, at most 18 words: a quick acknowledgement plus one useful suggestion or question that moves the idea forward. Sound natural and warm, like a sharp colleague. Never use markdown, lists, emoji, dashes, or ids; use only commas and periods. Do not describe the drawing in detail.`;
@@ -71,8 +78,8 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
     const draw = (async () => {
       const result = streamText({
         model: provider.model, system: systemPrompt, messages,
-        tools, stopWhen: stepCountIs(3), abortSignal: signal,
-        prepareStep: ({ stepNumber }) => stepNumber >= 2 ? { toolChoice: 'none' } : {},
+        tools, stopWhen: stepCountIs(6), abortSignal: signal,
+        prepareStep: ({ stepNumber }) => stepNumber >= 5 ? { toolChoice: 'none' } : {},
         onError: ({ error }) => log('llm_stream_failed', { kind: error instanceof Error ? error.name : 'unknown' }),
         providerOptions: { openai: { reasoningEffort: 'low', parallelToolCalls: true } },
         maxOutputTokens: 5000,
