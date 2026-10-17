@@ -2,13 +2,16 @@
 // It follows the live-drawing contract: while the mic is open the user's words stream into `partial`, every few
 // words a phrase commits, and the board gets one to three ops for it about 0.8 s later while the user keeps
 // talking. Nothing is spoken back. Suggestions arrive at pauses. Typed messages and tapped suggestions run as
-// "turn" requests. Add ?novoice to the URL to simulate a server without Gradium.
+// "turn" requests. Add ?novoice to the URL to simulate a server without Gradium. Heard phrases show as pending
+// ("queued", then "drawing") until their first op lands. Muting drops what is said while muted, like the real mic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BoardOp } from "../../shared/board";
 import type { BoardBridge, Conversation, ConversationPhase, TranscriptEntry } from "./types";
 
 type Step =
   | { kind: "op"; op: BoardOp }
+  /** Several ops in the same tick, the way a refine or a multi-line reply arrives. */
+  | { kind: "burst"; ops: BoardOp[] }
   | { kind: "wait"; ms: number }
   | { kind: "pending"; id: string; label: string }
   | { kind: "pending_done"; id: string };
@@ -18,9 +21,10 @@ type Phrase = { text: string; steps: Step[] };
 /** Phrases said in one breath, then a pause where suggestions show up. */
 type Segment = { phrases: Phrase[]; suggestions: string[] };
 
-type TurnScript = { match: RegExp; steps: () => Step[]; suggestions: string[] };
+type TurnScript = { match: RegExp; steps: (bridge: BoardBridge) => Step[]; suggestions: string[]; refine?: boolean };
 
 const op = (value: unknown): Step => ({ kind: "op", op: BoardOp.parse(value) });
+const burst = (values: readonly unknown[]): Step => ({ kind: "burst", ops: values.map((v) => BoardOp.parse(v)) });
 const wait = (ms: number): Step => ({ kind: "wait", ms });
 
 /** Draws a small badge illustration so the image path (pending card, then image) can be demoed offline. */
@@ -312,19 +316,64 @@ const TURNS: readonly TurnScript[] = [
     suggestions: ["Refine it into a loop", "Add daily quests"],
   },
   {
-    match: /refine|clean ?up|tidy/i,
+    // "Clean up my sketch", "make this a box": the user's drawing under the mouse (or selected, or the latest one)
+    // becomes a clean shape in exactly its spot.
+    match: /my (sketch|drawing|scribble)|clean up (this|that)|make (this|that) (a|an|into)\b/i,
+    steps: (bridge) => {
+      const summary = bridge.getSummary();
+      const sketches = summary.items.filter((item) => item.kind === "sketch");
+      const target =
+        sketches.find((item) => item.id === summary.pointer?.over) ?? sketches.find((item) => summary.selection.includes(item.id)) ?? sketches.at(-1);
+      if (target === undefined) return [op({ op: "add_shape", id: `hint-${Date.now().toString(36)}`, shape: "sticky", label: "Draw something first, then ask me to clean it up", color: "yellow", placement: { kind: "at_pointer" } })];
+      const wide = target.bounds.w > target.bounds.h * 1.3;
+      return [
+        burst([
+          { op: "add_shape", id: `clean-${target.id}`, shape: wide ? "box" : "ellipse", label: target.label.length > 0 ? target.label : "Your idea", color: "blue", placement: { kind: "at", target: target.id } },
+          { op: "delete", ids: [target.id] },
+        ]),
+      ];
+    },
+    suggestions: ["Label it", "Connect it to the loop"],
+  },
+  {
+    match: /\b(here|this spot|right there)\b/i,
+    steps: () => [op({ op: "add_shape", id: `here-${Date.now().toString(36)}`, shape: "sticky", label: "Right here", color: "pink", placement: { kind: "at_pointer" } })],
+    suggestions: ["Label this", "Make it a box"],
+  },
+  {
+    // Ten ideas in one breath: the board takes them in one at a time.
+    match: /brainstorm|ideas|burst/i,
     steps: () => [
-      op({ op: "delete", ids: PROGRESSION_BOXES.map((b) => b.id) }),
-      op({
-        op: "add_diagram",
-        id: "core-loop",
-        kind: "cycle",
-        title: "Core loop",
-        nodes: [...PROGRESSION_BOXES.map((b) => node(b.id, b.label, b.color)), node("new-areas", "New areas and cat skins", "blue")],
-        links: [],
-        axes: [],
-        placement: { kind: "auto" },
-      }),
+      burst(
+        ["Daily quests", "Cat skins", "Guilds", "Trading", "Pet hotel", "Fishing", "Seasons", "Leaderboards", "Mini-games", "Cat cafe"].map((label, i) => ({
+          op: "add_shape",
+          id: `idea-${i + 1}`,
+          shape: "sticky",
+          label,
+          color: (["yellow", "green", "blue", "pink", "purple"] as const)[i % 5],
+          placement: i === 0 ? { kind: "auto" } : { kind: "near", target: `idea-${i}`, direction: i % 4 === 3 ? "below" : "right" },
+        })),
+      ),
+    ],
+    suggestions: ["Group these", "Pick the top three"],
+  },
+  {
+    match: /refine|clean ?up|tidy/i,
+    refine: true,
+    steps: () => [
+      burst([
+        { op: "delete", ids: PROGRESSION_BOXES.map((b) => b.id) },
+        {
+          op: "add_diagram",
+          id: "core-loop",
+          kind: "cycle",
+          title: "Core loop",
+          nodes: [...PROGRESSION_BOXES.map((b) => node(b.id, b.label, b.color)), node("new-areas", "New areas and cat skins", "blue")],
+          links: [],
+          axes: [],
+          placement: { kind: "auto" },
+        },
+      ]),
     ],
     suggestions: ["Add daily quests", "Map the first session"],
   },
@@ -399,19 +448,9 @@ const TURNS: readonly TurnScript[] = [
   },
 ];
 
-function fallbackSteps(text: string, bridge: BoardBridge): Step[] {
-  const items = bridge.getSummary().items.filter((item) => item.kind !== "edge");
-  const last = items.at(-1);
-  return [
-    op({
-      op: "add_shape",
-      id: `note-${Date.now().toString(36)}`,
-      shape: "sticky",
-      label: text.slice(0, 200),
-      color: "yellow",
-      placement: last === undefined ? { kind: "auto" } : { kind: "near", target: last.id, direction: "below" },
-    }),
-  ];
+function fallbackSteps(text: string): Step[] {
+  // Auto lands where the user is looking: beside the last thing, or by the mouse if it moved.
+  return [op({ op: "add_shape", id: `note-${Date.now().toString(36)}`, shape: "sticky", label: text.slice(0, 200), color: "yellow", placement: { kind: "auto" } })];
 }
 
 type Listener = (level: number) => void;
@@ -431,6 +470,10 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
   const [partial, setPartial] = useState("");
   const [sketchJobs, setSketchJobs] = useState(0);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [pendingPhrases, setPendingPhrases] = useState<Conversation["pendingPhrases"]>([]);
+  const [refineJobs, setRefineJobs] = useState(0);
+  const [muted, setMutedState] = useState(false);
+  const mutedRef = useRef(false);
   const voiceAvailable = useMemo(() => !new URLSearchParams(window.location.search).has("novoice"), []);
 
   const micListeners = useRef(new Set<Listener>());
@@ -463,7 +506,9 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
     const handle = window.setInterval(() => {
       t += 1;
       if (!voiceOn.current) return;
-      const level = userTalking.current ? 0.3 + 0.45 * Math.abs(Math.sin(t / 3.1)) * Math.random() + 0.15 * Math.random() : 0.03 * Math.random();
+      const level = mutedRef.current
+        ? 0
+        : userTalking.current ? 0.3 + 0.45 * Math.abs(Math.sin(t / 3.1)) * Math.random() + 0.15 * Math.random() : 0.03 * Math.random();
       for (const listener of micListeners.current) listener(Math.min(1, level));
     }, 33);
     return () => window.clearInterval(handle);
@@ -473,16 +518,38 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
 
   /** Applies steps in order from `startMs`, holding `sketching` on while they run. Returns when the last one lands. */
   const draw = useCallback(
-    (steps: readonly Step[], startMs: number, then?: () => void): void => {
+    (steps: readonly Step[], startMs: number, options: { phrase?: string; refine?: boolean; then?: () => void } = {}): void => {
       const run = epoch.current;
       const live = () => run === epoch.current;
+      const { phrase, refine = false, then } = options;
       let clock = startMs;
-      later(startMs, () => live() && setSketchJobs((n) => n + 1));
+      // The request goes out a beat after the phrase is heard; until the first op lands it shows as drawing.
+      if (phrase !== undefined) later(Math.min(250, startMs), () => live() && setPendingPhrases((list) => list.map((p) => (p.id === phrase ? { ...p, status: "drawing" } : p))));
+      const landed = () => {
+        if (phrase !== undefined) setPendingPhrases((list) => list.filter((p) => p.id !== phrase));
+      };
+      later(startMs, () => {
+        if (!live()) return;
+        setSketchJobs((n) => n + 1);
+        if (refine) setRefineJobs((n) => n + 1);
+      });
       for (const step of steps) {
         switch (step.kind) {
           case "op":
-            later(clock, () => live() && bridgeRef.current.apply(step.op));
+            later(clock, () => {
+              if (!live()) return;
+              landed();
+              bridgeRef.current.apply(step.op);
+            });
             clock += step.op.op === "add_mockup" ? 700 : OP_GAP_MS;
+            break;
+          case "burst":
+            later(clock, () => {
+              if (!live()) return;
+              landed();
+              for (const o of step.ops) bridgeRef.current.apply(o);
+            });
+            clock += OP_GAP_MS;
             break;
           case "wait":
             clock += step.ms;
@@ -502,15 +569,21 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
       }
       later(clock + 120, () => {
         if (!live()) return;
+        landed();
         setSketchJobs((n) => Math.max(0, n - 1));
+        if (refine) setRefineJobs((n) => Math.max(0, n - 1));
         then?.();
       });
     },
     [later],
   );
 
-  const commitUser = useCallback((text: string) => {
-    setTranscript((prev) => [...prev, { id: entryId(), role: "user", text, final: true }]);
+  /** Adds a final user turn and marks it heard but not drawn yet. Returns its id. */
+  const commitUser = useCallback((text: string): string => {
+    const id = entryId();
+    setTranscript((prev) => [...prev, { id, role: "user", text, final: true }]);
+    setPendingPhrases((list) => [...list, { id, text, status: "queued" }]);
+    return id;
   }, []);
 
   /** Speaks the monologue: words stream into `partial`, phrases commit and draw while the next one is spoken. */
@@ -519,7 +592,7 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
       const segment = MONOLOGUE[segmentIndex];
       if (segment === undefined) return;
       const run = epoch.current;
-      const live = () => run === epoch.current && voiceOn.current;
+      const live = () => run === epoch.current && voiceOn.current && !mutedRef.current;
       let clock = startMs;
       later(clock, () => {
         if (!live()) return;
@@ -536,8 +609,7 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
         later(clock, () => {
           if (!live()) return;
           setPartial("");
-          commitUser(phrase.text);
-          draw(phrase.steps, DRAW_DELAY_MS);
+          draw(phrase.steps, DRAW_DELAY_MS, { phrase: commitUser(phrase.text) });
         });
       }
       later(clock + 40, () => {
@@ -556,12 +628,12 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
 
   const runTurn = useCallback(
     (text: string) => {
-      commitUser(text);
+      const phrase = commitUser(text);
       setSuggestions([]);
       const script = TURNS.find((s) => s.match.test(text));
-      const steps = script === undefined ? fallbackSteps(text, bridgeRef.current) : script.steps();
+      const steps = script === undefined ? fallbackSteps(text) : script.steps(bridgeRef.current);
       const ideas = script?.suggestions ?? [];
-      draw(steps, 500, () => setSuggestions(ideas));
+      draw(steps, 500, { phrase, refine: script?.refine === true, then: () => setSuggestions(ideas) });
     },
     [commitUser, draw],
   );
@@ -581,6 +653,8 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
     clearTimers();
     userTalking.current = false;
     setSketchJobs(0);
+    setRefineJobs(0);
+    setPendingPhrases([]);
     setPartial("");
   }, [clearTimers]);
 
@@ -598,12 +672,22 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
     speak(0, 700);
   }, [speak, voiceAvailable]);
 
+  const setMuted = useCallback((next: boolean) => {
+    mutedRef.current = next;
+    setMutedState(next);
+    if (next) {
+      userTalking.current = false;
+      setPartial("");
+    }
+  }, []);
+
   const stopVoice = useCallback(() => {
     voiceOn.current = false;
+    setMuted(false);
     userTalking.current = false;
     setPartial("");
     setPhase({ kind: "idle" });
-  }, []);
+  }, [setMuted]);
 
   const subscribeLevel = useCallback((listener: Listener) => {
     micListeners.current.add(listener);
@@ -616,10 +700,15 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
   const subscribeOutputLevel = useCallback(() => () => undefined, []);
 
   const sketching = sketchJobs > 0;
+  const refining = refineJobs > 0;
   return useMemo(
     () => ({
       phase,
       sketching,
+      refining,
+      pendingPhrases,
+      muted,
+      setMuted,
       suggestions,
       pickSuggestion,
       transcript,
@@ -632,6 +721,6 @@ export function useMockConversation(bridge: BoardBridge): Conversation {
       sendText,
       interrupt,
     }),
-    [phase, sketching, suggestions, pickSuggestion, transcript, partial, voiceAvailable, subscribeLevel, subscribeOutputLevel, startVoice, stopVoice, sendText, interrupt],
+    [phase, sketching, refining, pendingPhrases, muted, setMuted, suggestions, pickSuggestion, transcript, partial, voiceAvailable, subscribeLevel, subscribeOutputLevel, startVoice, stopVoice, sendText, interrupt],
   );
 }

@@ -1,5 +1,6 @@
 // The mic switch. Off reads "Talk"; on, it fills like a selected Excalidraw tool and shows a red live dot plus a
 // small level meter driven straight from the mic level through refs, so React never re-renders on sound.
+// While live, a mute button sits beside it: muted, the meter goes flat, the dot goes grey and the button reads "Muted".
 import { useEffect, useRef } from "react";
 import type { Conversation } from "../conversation/types";
 import { AlertIcon, MicIcon, MicOffIcon } from "./icons";
@@ -39,10 +40,11 @@ const BAR_SHAPE = [0.6, 1, 0.75] as const;
 export function MicToggle({ conversation }: { conversation: Conversation }) {
   const state = micState(conversation);
   const meterRef = useRef<HTMLSpanElement>(null);
-  const { subscribeLevel } = conversation;
+  const { subscribeLevel, muted } = conversation;
+  const listening = state === "live" && !muted;
 
   useEffect(() => {
-    if (state !== "live") return;
+    if (!listening) return;
     const bars = meterRef.current?.children;
     let smooth = 0;
     const unsubscribe = subscribeLevel((raw) => {
@@ -60,7 +62,7 @@ export function MicToggle({ conversation }: { conversation: Conversation }) {
       if (bars === undefined) return;
       for (const bar of bars) if (bar instanceof HTMLElement) bar.style.transform = "";
     };
-  }, [state, subscribeLevel]);
+  }, [listening, subscribeLevel]);
 
   const onClick = () => {
     switch (state) {
@@ -86,6 +88,7 @@ export function MicToggle({ conversation }: { conversation: Conversation }) {
       type="button"
       className="mic"
       data-state={state}
+      data-muted={state === "live" && muted}
       aria-pressed={state === "live"}
       aria-disabled={state === "disabled" || state === "connecting"}
       title={state === "disabled" ? "Voice is off on this server. Type instead." : state === "live" ? "Stop listening" : undefined}
@@ -103,6 +106,34 @@ export function MicToggle({ conversation }: { conversation: Conversation }) {
       </span>
       <span>{LABELS[state]}</span>
       {state === "live" && <span className="mic-dot" aria-hidden="true" />}
+    </button>
+  );
+}
+
+/** Keyboard shortcut for mute. Excalidraw binds no tool to M. */
+export const MUTE_KEY = "m";
+
+/** Mute stays in the voice session (instant to undo); typing, chips and drawing keep working. */
+export function MuteButton({ muted, onToggle }: { muted: boolean; onToggle: () => void }) {
+  const hint = muted ? "Unmute (M)" : "Mute (M)";
+  return (
+    <button
+      type="button"
+      className="mute"
+      data-muted={muted}
+      aria-pressed={muted}
+      aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+      aria-keyshortcuts="M"
+      title={hint}
+      onClick={onToggle}
+    >
+      <span className="mute-glyph" aria-hidden="true">
+        <MicIcon className="mute-on" size={18} strokeWidth={2} />
+        <MicOffIcon className="mute-off" size={18} strokeWidth={2} />
+      </span>
+      <span className="mute-label">
+        <span>Muted</span>
+      </span>
     </button>
   );
 }
