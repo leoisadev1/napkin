@@ -422,17 +422,17 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
 
   // ---- Feedback: fade in, partner cursor, follow --------------------------------------------
 
+  /** Where the partner's cursor rests on an item: lower right, clear of centered labels. */
+  function restingPoint(rect: Rect): Point {
+    return { x: rect.x + rect.w * 0.78, y: rect.y + rect.h * 0.82 };
+  }
+
   function announce(placed: readonly ExcalidrawElement[], stagger: "together" | "sequence") {
     if (placed.length === 0) return;
     const groups = stagger === "sequence" ? placed.map((el) => [el]) : [placed];
     animator.fadeIn(groups, stagger === "sequence" ? Math.max(8, Math.min(45, 900 / placed.length)) : 0);
     const rect = boundsOf(placed);
-    if (rect !== null) {
-      animator.pointAt(
-        { x: rect.x + rect.w * 0.62, y: rect.y + Math.min(rect.h * 0.7, rect.h - 8) },
-        placed.filter((el) => containerIdOf(el) === null).map((el) => el.id),
-      );
-    }
+    if (rect !== null) animator.pointAt(restingPoint(rect), placed.filter((el) => containerIdOf(el) === null).map((el) => el.id));
     for (const el of placed) pendingFollow.add(el.id);
     if (followTimer !== null) window.clearTimeout(followTimer);
     followTimer = window.setTimeout(follow, 140);
@@ -707,7 +707,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     lastPlaced = op.id;
     const placed = tx.elements.filter((el) => own.has(el.id));
     const bounds = boundsOf(placed);
-    if (bounds !== null) animator.pointAt(center(bounds), []);
+    if (bounds !== null) animator.pointAt(restingPoint(bounds), []);
     for (const el of placed) pendingFollow.add(el.id);
     if (followTimer !== null) window.clearTimeout(followTimer);
     followTimer = window.setTimeout(follow, 140);
@@ -810,7 +810,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     animator.fadeIn([placed], 0);
     animator.pulse(placed.map((el) => el.id));
     const rect = boundsOf(placed);
-    if (rect !== null) animator.pointAt(center(rect), []);
+    if (rect !== null) animator.pointAt(restingPoint(rect), []);
     for (const el of placed) pendingFollow.add(el.id);
     if (followTimer !== null) window.clearTimeout(followTimer);
     followTimer = window.setTimeout(follow, 140);
