@@ -34,3 +34,9 @@ for (const fixture of ['mute-engine', 'pipeline-engine']) test(`${fixture} exerc
   const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   expect(error).toBe(''); expect(exit).toBe(0);
 }, 5000);
+
+test('a pipelined question belongs only to the live request whose NEW words complete it', async () => {
+  const child = Bun.spawn(['bun', 'server/fixtures/question-engine.ts'], { stdout: 'pipe', stderr: 'pipe' });
+  const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  expect(error).toBe(''); expect(exit).toBe(0);
+}, 5000);

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BoardOp, NodeId, Placement } from '../shared/board';
+import { concise, conciseOperation, shapeLabel } from './concision';
 import { log } from './config';
 
 const Image = z.object({ kind: z.literal('image'), id: NodeId, prompt: z.string().min(1).max(2000), caption: z.string().max(80), placement: Placement });
@@ -65,13 +66,13 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
     switch (command) {
       case 'suggest:': return { kind: 'suggestions', items: groups(parts).map(group => group.map(t => t.value).join(' ').trim()).filter(Boolean).slice(0, 3).map(s => s.slice(0, 40)) };
       case 'box': case 'ellipse': case 'diamond': case 'sticky': case 'text':
-        count(parts, 3, 4); value = { op: 'add_shape', id: word(parts[0]), shape: command, color: word(parts[1]), label: quoted(parts.at(-1)), placement: placement(parts.slice(2, -1)) }; break;
-      case 'frame': count(parts, 2, 3); value = { op: 'add_frame', id: word(parts[0]), title: quoted(parts.at(-1)), placement: placement(parts.slice(1, -1)) }; break;
+        count(parts, 3, 4); value = { op: 'add_shape', id: word(parts[0]), shape: command, color: word(parts[1]), label: shapeLabel(quoted(parts.at(-1))), placement: placement(parts.slice(2, -1)) }; break;
+      case 'frame': count(parts, 2, 3); value = { op: 'add_frame', id: word(parts[0]), title: concise(quoted(parts.at(-1)), 6, 80), placement: placement(parts.slice(1, -1)) }; break;
       case 'edge': {
         count(parts, 2, 3); const link = word(parts[1]);
         if (!/^[^>]+->[^>]+$/.test(link)) throw new Error('Invalid edge');
         const [from, to] = link.split('->');
-        value = { op: 'add_edge', id: word(parts[0]), from, to, label: parts[2] ? quoted(parts[2]) : '' }; break;
+        value = { op: 'add_edge', id: word(parts[0]), from, to, label: parts[2] ? concise(quoted(parts[2]), 3, 60) : '' }; break;
       }
       case 'diagram': {
         const [head = [], ...sections] = groups(parts); count(head, 3, 4);
@@ -81,12 +82,12 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
           let text = line.trim().slice(group[0]?.start ?? 0, group.at(-1)?.end ?? 0);
           if (text.startsWith('links:')) { section = 'links'; text = text.slice(6).trim(); }
           else if (text.startsWith('axes:')) { section = 'axes'; text = text.slice(5).trim(); }
-          if (section === 'axes') { if (text) axes.push(text.replace(/^"|"$/g, '')); continue; }
+          if (section === 'axes') { if (text) axes.push(concise(text.replace(/^"|"$/g, ''), 3, 40)); continue; }
           if (section === 'links') {
             for (const link of (text.match(/(?:"(?:\\.|[^"\\])*"|[^;"])+/g) ?? []).filter(value => value.trim())) {
               const match = /^\s*([a-z0-9-]+)->([a-z0-9-]+)(?:\s+("(?:\\.|[^"\\])*"))?\s*$/.exec(link);
               if (!match) throw new Error('Invalid diagram link');
-              links.push({ from: match[1], to: match[2], label: match[3] ? z.string().parse(JSON.parse(match[3])) : '' });
+              links.push({ from: match[1], to: match[2], label: match[3] ? concise(z.string().parse(JSON.parse(match[3])), 3, 60) : '' });
             }
             continue;
           }
@@ -95,14 +96,14 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
           const match = /^([a-z0-9-]+):(.+):(gray|blue|green|yellow|orange|red|purple|pink|teal)(?::(box|ellipse|diamond|sticky))?$/.exec(text);
           if (!match) throw new Error('Invalid diagram node');
           const label = (match[2] ?? '').trim();
-          nodes.push({ id: match[1], label: label.startsWith('"') ? z.string().parse(JSON.parse(label)) : label, color: match[3], shape: match[4] ?? 'box', parent: parentMatch?.[1] ?? null });
+          nodes.push({ id: match[1], label: concise(label.startsWith('"') ? z.string().parse(JSON.parse(label)) : label, 6, 120), color: match[3], shape: match[4] ?? 'box', parent: parentMatch?.[1] ?? null });
         }
-        value = { op: 'add_diagram', id: word(head[0]), kind: word(head[1]), title: quoted(head.at(-1)), placement: placement(head.slice(2, -1)), nodes, links, axes };
+        value = { op: 'add_diagram', id: word(head[0]), kind: word(head[1]), title: concise(quoted(head.at(-1)), 6, 80), placement: placement(head.slice(2, -1)), nodes, links, axes };
         break;
       }
       case 'phone': case 'desktop': {
         const [head = [], ...components] = groups(parts); count(head, 2, 3);
-        value = { op: 'add_mockup', id: word(head[0]), title: quoted(head.at(-1)), device: command, placement: placement(head.slice(1, -1)), components: components.map(group => {
+        value = { op: 'add_mockup', id: word(head[0]), title: concise(quoted(head.at(-1)), 6, 80), device: command, placement: placement(head.slice(1, -1)), components: components.map(group => {
           const first = word(group[0]); const colon = first.indexOf(':');
           if (colon < 1) throw new Error('Missing component kind');
           return { kind: first.slice(0, colon), label: [first.slice(colon + 1), ...group.slice(1).map(t => t.value)].join(' ').trim() };
@@ -113,18 +114,18 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
         count(parts, 2, 3); const id = word(parts[0]); let color: string | undefined; let label: string | undefined;
         for (const token of parts.slice(1)) {
           if (token.kind === 'word' && token.value.startsWith('color:') && color === undefined) color = token.value.slice(6);
-          else if (token.kind === 'string' && label === undefined) label = token.value;
+          else if (token.kind === 'string' && label === undefined) label = shapeLabel(token.value);
           else throw new Error('Invalid update');
         }
         value = { op: 'update', id, color, label }; break;
       }
       case 'move': count(parts, 2); value = { op: 'move', id: word(parts[0]), placement: placement(parts.slice(1)) }; break;
       case 'del': value = { op: 'delete', ids: parts.map(word) }; break;
-      case 'title': count(parts, 1); value = { op: 'set_title', title: quoted(parts[0]) }; break;
+      case 'title': count(parts, 1); value = { op: 'set_title', title: concise(quoted(parts[0]), 6, 80) }; break;
       case 'clear': count(parts, 0); value = { op: 'clear' }; break;
       default: throw new Error('Unknown command');
     }
-    return { kind: 'op', op: BoardOp.parse(value) };
+    return { kind: 'op', op: conciseOperation(BoardOp.parse(value)) };
   } catch { log('invalid_drawing_line', { command: line.trim().split(/\s/)[0] ?? '', length: line.length }); return; }
 }
 

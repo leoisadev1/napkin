@@ -1,5 +1,6 @@
 import { ServerStatus, type ChatTurn } from '../../../shared/agent-protocol';
 import type { BoardOp, BoardSummary } from '../../../shared/board';
+import { StretchQuestions } from './questions';
 import { agentEvents } from '../../agent/client';
 import { boardKeywords } from '../../voice/keywords';
 import { captureMicrophone } from '../../voice/microphone';
@@ -21,11 +22,13 @@ export class ConversationEngine {
   private liveRevision = 0;
   private refinedRevision = 0;
   private stretchText = '';
+  private stretchQuestions = new StretchQuestions();
+  private refineQuestions = this.stretchQuestions;
   private refineStretch: string | undefined;
   private suggestionRequest: AbortController | undefined;
   private suggestionStretch: string | undefined;
   private pauseTimer: ReturnType<typeof setTimeout> | undefined;
-  private queue: { ids: string[]; mode: 'live' | 'turn'; text: string; history: ChatTurn[]; rollbackHistory: ChatTurn[] }[] = [];
+  private queue: { ids: string[]; mode: 'live' | 'turn'; text: string; history: ChatTurn[]; rollbackHistory: ChatTurn[]; stretch: string; questions: StretchQuestions }[] = [];
   private uncommittedWords = false;
   private diagrams = new Map<string, Extract<BoardOp, { op: 'add_diagram' }>>();
   private mockups = new Map<string, Extract<BoardOp, { op: 'add_mockup' }>>();
@@ -144,7 +147,7 @@ export class ConversationEngine {
     const text = value.trim(); if (!text) return;
     if (!this.uncommittedWords) this.newSpeech();
     this.uncommittedWords = false;
-    if (!this.stretchId) { this.stretchId = crypto.randomUUID(); this.stretchText = ''; }
+    if (!this.stretchId) { this.stretchId = crypto.randomUUID(); this.stretchText = ''; this.stretchQuestions = new StretchQuestions(); }
     this.stretchText = `${this.stretchText} ${text}`.trim();
     const id = this.stretchId;
     const previous = this.state.transcript.find(entry => entry.id === id);
@@ -155,7 +158,7 @@ export class ConversationEngine {
   finishSpokenStretch = () => {
     clearTimeout(this.pauseTimer);
     const id = this.stretchId; this.stretchId = undefined;
-    if (id) { this.suggestionStretch = this.state.transcript.find(entry => entry.id === id)?.text.slice(-4000); this.refineStretch = this.suggestionStretch; }
+    if (id) { this.suggestionStretch = this.state.transcript.find(entry => entry.id === id)?.text.slice(-4000); this.refineStretch = this.suggestionStretch; this.refineQuestions = this.stretchQuestions; }
     this.update({ transcript: this.state.transcript.map(entry => entry.id === id ? { ...entry, final: true } : entry) });
     void this.drain();
   };
@@ -175,7 +178,7 @@ export class ConversationEngine {
       const part = text.slice(offset, offset + 4000);
       const id = crypto.randomUUID();
       this.update({ pendingPhrases: [...this.state.pendingPhrases, { id, text: part, status: 'queued' }] });
-      this.queue.push({ ids: [id], mode, text: part, rollbackHistory: this.history.slice(-20), history: [...this.history.slice(-19), ...(mode === 'live' ? [{ role: 'user', text: `Whole current speaking stretch so far (NEW words are the request utterance): ${this.stretchText.slice(-3900)}` } satisfies ChatTurn] : [])] });
+      this.queue.push({ ids: [id], mode, text: part, stretch: this.stretchText, questions: this.stretchQuestions, rollbackHistory: this.history.slice(-20), history: [...this.history.slice(-19), ...(mode === 'live' ? [{ role: 'user', text: `Whole current speaking stretch so far (NEW words are the request utterance): ${this.stretchText.slice(-3900)}` } satisfies ChatTurn] : [])] });
       this.history = [...this.history, { role: 'user', text: part } satisfies ChatTurn].slice(-20);
     }
     void this.drain();
@@ -230,7 +233,7 @@ export class ConversationEngine {
     let done = false;
     try {
       const board = this.bridge.getSummary();
-      for await (const event of agentEvents({ mode: 'refine', utterance: text, history: this.requestHistory(this.history, board), board }, abort.signal)) {
+      for await (const event of agentEvents({ mode: 'refine', utterance: text, history: this.requestHistory([...this.history.slice(-18), { role: 'user', text: this.refineQuestions.policy() }], board), board }, abort.signal)) {
         if (abort.signal.aborted) return;
         if (event.type === 'op') ops.push(event.op);
         else if (event.type === 'pending') { this.imageAttempted = true; pending.add(event.id); this.bridge.showPending(event); }
@@ -271,8 +274,9 @@ export class ConversationEngine {
     if (prior && (this.options.pipeline === false || this.flights.length >= 2 || prior.mode !== 'live' || !prior.released || this.queue[0]?.mode !== 'live')) return;
     const batch = this.queue.shift();
     if (!batch) { if (!this.flights.length) { void this.refine(); if (!this.state.muted) void this.suggest(); } return; }
-    while (batch.mode === 'live' && this.queue[0]?.mode === 'live' && batch.text.length + (this.queue[0]?.text.length ?? 0) + 1 <= 4000) {
+    while (batch.mode === 'live' && this.queue[0]?.mode === 'live' && this.queue[0]?.questions === batch.questions && batch.text.length + (this.queue[0]?.text.length ?? 0) + 1 <= 4000) {
       const next = this.queue.shift(); if (next) {
+        batch.stretch = next.stretch;
         batch.text += ` ${next.text}`; batch.ids.push(...next.ids);
         const context = next.history.at(-1); if (context?.text.startsWith('Whole current speaking stretch')) batch.history = [...batch.history.filter(turn => !turn.text.startsWith('Whole current speaking stretch')), context];
       }
@@ -298,15 +302,16 @@ export class ConversationEngine {
         this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !head.ids.includes(phrase.id)) });
       }
     };
-    const pending = new Set<string>();
+    const pending = new Set<string>(); const answeredIds: string[] = [];
     const replyId = crypto.randomUUID(); let reply = ''; let done = false;
     this.update({ pendingPhrases: this.state.pendingPhrases.map(phrase => batch.ids.includes(phrase.id) ? { ...phrase, status: 'drawing' } : phrase), sketching: true, phase: this.stt ? this.resting() : { kind: 'thinking' } });
     try {
       const board = this.bridge.getSummary();
-      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: this.requestHistory([...batch.history, ...this.flights.filter(other => other !== flight).map(other => ({ role: 'user', text: `Being drawn by a parallel request; do not duplicate or replace its concepts: ${other.text}`.slice(0, 4000) } satisfies ChatTurn))].slice(-20), board), board }, abort.signal)) {
+      const questionPolicy = batch.mode === 'live' ? batch.questions.claim(batch.stretch, board.items.some(item => item.kind !== 'edge' && !!item.label)) : undefined;
+      for await (const event of agentEvents({ utterance: batch.text, mode: batch.mode, history: this.requestHistory([...batch.history.slice(0, -1), ...(questionPolicy ? [{ role: 'user', text: questionPolicy } satisfies ChatTurn] : []), ...batch.history.slice(-1), ...this.flights.filter(other => other !== flight).map(other => ({ role: 'user', text: `Being drawn by a parallel request; do not duplicate or replace its concepts: ${other.text}`.slice(0, 4000) } satisfies ChatTurn))].slice(-20), board), board }, abort.signal)) {
         if (abort.signal.aborted) return;
         switch (event.type) {
-          case 'op': flight.ops.push(event.op); applyReady(); release(); break;
+          case 'op': if (event.op.op === 'add_diagram') answeredIds.push(event.op.id); flight.ops.push(event.op); applyReady(); release(); break;
           case 'pending': this.imageAttempted = true; this.pending.add(event.id); pending.add(event.id); this.bridge.showPending(event); break;
           case 'pending_done': this.pending.delete(event.id); pending.delete(event.id); this.bridge.clearPending(event.id); break;
           case 'suggestions': this.update({ suggestions: event.items }); break;
@@ -321,6 +326,7 @@ export class ConversationEngine {
           default: { const exhaustive: never = event; void exhaustive; }
         }
       }
+      if (done) batch.questions.complete(answeredIds);
       if (!done) throw new Error('The response was interrupted. Please try again.');
       if (reply.trim()) this.history = [...this.history, { role: 'assistant', text: reply.slice(0, 4000) } satisfies ChatTurn].slice(-20);
     } catch (error) {
