@@ -17,7 +17,12 @@ export type Direction = z.infer<typeof Direction>;
 
 /** Where to put a new or moved item. "auto" lets the canvas find free space. */
 export const Placement = z.discriminatedUnion("kind", [
+  /** Free space near what the user is looking at (pointer, selection, visible area), beside related items. */
   z.object({ kind: z.literal("auto") }),
+  /** Where the user's mouse is ("here", "this spot"). Falls back to auto when there is no pointer. */
+  z.object({ kind: z.literal("at_pointer") }),
+  /** Take the exact spot of an existing item, e.g. replacing a user's rough sketch with a clean shape. */
+  z.object({ kind: z.literal("at"), target: NodeId }),
   z.object({ kind: z.literal("near"), target: NodeId, direction: Direction }),
   z.object({ kind: z.literal("inside"), frame: NodeId }),
 ]);
@@ -129,9 +134,17 @@ export const BoardOp = z.discriminatedUnion("op", [
 export type BoardOp = z.infer<typeof BoardOp>;
 
 /** Compact view of the board that the client sends with every turn so the agent can reference items. */
+export const Rect = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() });
+export type Rect = z.infer<typeof Rect>;
+
 export const BoardItem = z.object({
   id: NodeId,
-  kind: z.enum(["shape", "edge", "frame", "mockup", "image", "diagram"]),
+  /** "sketch" = something the user drew that isn't a labelled shape: freehand strokes, bare lines, unlabelled boxes. */
+  kind: z.enum(["shape", "edge", "frame", "mockup", "image", "diagram", "sketch"]),
+  /** Who made it. The agent may edit user items when asked ("label this", "clean up my sketch"). */
+  origin: z.enum(["agent", "user"]),
+  /** Rounded scene bounds, so "the box on the left" and "below this" can be resolved. */
+  bounds: Rect,
   label: z.string(),
   /** Frame id when the item sits inside a frame. */
   frame: NodeId.nullable(),
@@ -145,5 +158,9 @@ export const BoardSummary = z.object({
   items: z.array(BoardItem).max(400),
   /** Ids the user currently has selected on the canvas, so "this" and "that" resolve. */
   selection: z.array(NodeId),
+  /** Mouse position in scene coordinates and the item under or nearest it (within ~160px), or null if off-canvas. */
+  pointer: z.object({ x: z.number(), y: z.number(), over: NodeId.nullable() }).nullable(),
+  /** Visible scene area. */
+  viewport: Rect,
 });
 export type BoardSummary = z.infer<typeof BoardSummary>;
