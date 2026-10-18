@@ -35,3 +35,10 @@ test('comparison waits for both named alternatives', () => {
   expect(ledger.claim(fragment, false)).toContain('"answer":[]');
   expect(ledger.claim(`${fragment} and SQLite.`, false)).toContain('"answer":[{');
 });
+test('a casual naming request is claimed once its topic arrives', () => {
+  const ledger = new StretchQuestions(); const request = 'just experiment with some names';
+  expect(ledger.claim(request, false)).toContain('"answer":[]');
+  expect(ledger.hasOpen()).toBe(false);
+  expect(ledger.claim(`${request} by the way this is like a tech podcast so`, false)).toContain('"answer":[{');
+  expect(ledger.hasOpen()).toBe(true);
+});

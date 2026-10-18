@@ -224,7 +224,7 @@ export class ConversationEngine {
 
   private async refine() {
     const text = this.refineStretch;
-    if (!text || this.refineRequest || this.flights.length || this.queue.length || this.liveRevision <= this.refinedRevision) return;
+    if (!text || this.refineRequest || this.flights.length || this.queue.length || (this.liveRevision <= this.refinedRevision && !this.refineQuestions.hasOpen())) return;
     this.refineStretch = undefined;
     const revision = this.liveRevision;
     const abort = new AbortController(); this.refineRequest = abort; this.update({ refining: true });
