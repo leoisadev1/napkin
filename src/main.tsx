@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { BoardsApp } from "./boards/BoardsApp";
-import { idbStorage } from "./boards/idb";
+import { idbStorage, localJournal } from "./boards/idb";
 import { createBoardStore } from "./boards/store";
 
 function reportBoardsError(error: unknown) {
@@ -12,6 +12,7 @@ function reportBoardsError(error: unknown) {
 
 const store = createBoardStore({
   ...idbStorage(),
+  journal: localJournal(),
   onCorrupt: ({ store: kind, key, error }) => console.warn("[boards] skipped unreadable record", { kind, key, error }),
 });
 

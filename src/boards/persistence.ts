@@ -70,7 +70,8 @@ export function createPersistence(session: BoardSession, bridge: CanvasBridge, o
     sceneDirty = false;
     memoryDirty = false;
     touched = false;
-    store.save({ version: 1, id, scene, memory }, { touched: wasTouched }).catch(report);
+    const record: BoardData = { version: 1, id, scene, memory };
+    (forced ? store.saveNow(record, { touched: wasTouched }) : store.save(record, { touched: wasTouched })).catch(report);
     if (fingerprint !== null && fingerprint !== thumbFor) {
       thumbFor = fingerprint;
       void renderThumb(scene.elements, live?.files ?? {}, live?.appState.viewBackgroundColor ?? "#ffffff");

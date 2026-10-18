@@ -1,6 +1,7 @@
 // Board store: the list of boards (light records, always in memory) plus each board's scene and conversation
 // (heavy records, read on open). Storage is a tiny key-value interface so tests run on a Map and the app on IndexedDB.
 // Every operation runs through one queue, so a read always sees the writes issued before it.
+import { z } from "zod";
 import type { BoardData, BoardThumb } from "./schema";
 import { BoardData as BoardDataSchema, BoardId, BoardMeta, BoardThumb as BoardThumbSchema, emptyData, TITLE_MAX } from "./schema";
 
@@ -12,6 +13,19 @@ export interface KeyValue {
   del(key: string): Promise<void>;
   values(): Promise<unknown[]>;
 }
+
+/**
+ * Synchronous side storage (localStorage in the app). IndexedDB writes started during pagehide often die with the
+ * page, so a forced save also lands here at once and is replayed into the main store on the next start.
+ */
+export interface Journal {
+  keys(): string[];
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
+  del(key: string): void;
+}
+
+const JournalEntry = z.object({ record: z.unknown(), touchedAt: z.number().finite().nullable() });
 
 export type BoardsSnapshot =
   | { status: "loading" }
@@ -40,12 +54,13 @@ export function createBoardStore(options: {
   meta: KeyValue;
   data: KeyValue;
   thumbs: KeyValue;
+  journal?: Journal;
   now?: () => number;
   newId?: () => BoardId;
   /** Called for each stored record that failed to parse and was skipped. */
-  onCorrupt?: (info: { store: "meta" | "data" | "thumbs"; key: string | null; error: unknown }) => void;
+  onCorrupt?: (info: { store: "meta" | "data" | "thumbs" | "journal"; key: string | null; error: unknown }) => void;
 }) {
-  const { meta, data, thumbs, now = Date.now, newId = randomBoardId, onCorrupt } = options;
+  const { meta, data, thumbs, journal, now = Date.now, newId = randomBoardId, onCorrupt } = options;
   const boards = new Map<BoardId, BoardMeta>();
   const thumbUrls = new Map<BoardId, string>();
   const listeners = new Set<() => void>();
@@ -81,12 +96,31 @@ export function createBoardStore(options: {
         boards.set(parsed.data.id, parsed.data);
         lastStamp = Math.max(lastStamp, parsed.data.updatedAt);
       }
+      for (const key of journal?.keys() ?? []) await replay(key);
       for (const raw of await thumbs.values()) {
         const parsed = BoardThumbSchema.safeParse(raw);
         if (parsed.success && boards.has(parsed.data.id)) thumbUrls.set(parsed.data.id, parsed.data.dataUrl);
       }
     });
     publish();
+  }
+
+  /** Moves one journal entry into the main store. Runs inside init's queue slot. */
+  async function replay(key: string) {
+    const entry = JournalEntry.safeParse(journal?.get(key));
+    const record = entry.success ? BoardDataSchema.safeParse(entry.data.record) : null;
+    const current = record?.success === true ? boards.get(record.data.id) : undefined;
+    if (entry.success && record?.success === true && current !== undefined) {
+      await data.set(current.id, record.data);
+      if (entry.data.touchedAt !== null && entry.data.touchedAt > current.updatedAt) {
+        const next: BoardMeta = { ...current, updatedAt: entry.data.touchedAt };
+        await meta.set(next.id, next);
+        boards.set(next.id, next);
+      }
+    } else if (!entry.success || record?.success !== true) {
+      onCorrupt?.({ store: "journal", key, error: entry.success ? record?.error : entry.error });
+    }
+    journal?.del(key);
   }
 
   function create(args: { title?: string } = {}): Promise<BoardMeta> {
@@ -128,6 +162,21 @@ export function createBoardStore(options: {
       boards.set(next.id, next);
       publish();
     });
+  }
+
+  /**
+   * save(), plus a synchronous journal copy so the write survives the page going away right now. The journal entry
+   * is dropped once the main store has it.
+   */
+  function saveNow(record: BoardData, args: { touched: boolean }): Promise<void> {
+    if (journal !== undefined && boards.has(record.id)) {
+      try {
+        journal.set(record.id, { record, touchedAt: args.touched ? stamp() : null });
+      } catch {
+        // Over quota (large images): the IndexedDB write below is all we have.
+      }
+    }
+    return save(record, args).finally(() => journal?.del(record.id));
   }
 
   function rename(id: BoardId, title: string): Promise<void> {
@@ -184,6 +233,7 @@ export function createBoardStore(options: {
     create,
     load,
     save,
+    saveNow,
     rename,
     saveThumb,
     remove,

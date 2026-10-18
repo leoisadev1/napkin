@@ -208,6 +208,44 @@ describe("board store", () => {
     expect(snapshot.status === "ready" && snapshot.thumbs.get(gone.id)).toBe("data:image/png;base64,CCCC");
   });
 
+  test("a save forced at pagehide survives the page dying before IndexedDB finishes", async () => {
+    const { store, meta, data, thumbs, tick } = setup();
+    const entries = new Map<string, unknown>();
+    const journal = {
+      keys: () => [...entries.keys()],
+      get: (key: string) => entries.get(key),
+      set: (key: string, value: unknown) => entries.set(key, JSON.parse(JSON.stringify(value))),
+      del: (key: string) => entries.delete(key),
+    };
+    await store.init();
+    const board = await store.create();
+    // Simulate the page dying: the journal write happens, the IndexedDB write never does.
+    const dying = createBoardStore({ meta, data: { ...data, set: () => new Promise<void>(() => {}) }, thumbs, journal, now: () => 99_999 });
+    await dying.init();
+    void dying.saveNow({ ...(await dying.load(board.id)), memory: { ...EMPTY_MEMORY, suggestions: ["kept"] } }, { touched: true });
+    expect(entries.size).toBe(1);
+
+    tick(1);
+    const next = createBoardStore({ meta, data, thumbs, journal });
+    await next.init();
+    expect((await next.load(board.id)).memory.suggestions).toEqual(["kept"]);
+    expect(next.get(board.id)?.updatedAt).toBe(99_999);
+    expect(entries.size).toBe(0);
+  });
+
+  test("journal entries that do not parse, or name a deleted board, are dropped", async () => {
+    const entries = new Map<string, unknown>([
+      ["junk", { record: 42, touchedAt: null }],
+      ["ghostboard", { record: { version: 1, id: "ghostboard", scene: { elements: [], files: [], view: null }, memory: EMPTY_MEMORY }, touchedAt: 5 }],
+    ]);
+    const { meta, data, thumbs } = setup();
+    const store = createBoardStore({ meta, data, thumbs, journal: { keys: () => [...entries.keys()], get: (k) => entries.get(k), set: () => {}, del: (k) => entries.delete(k) } });
+    await store.init();
+    expect(boardsOf(store)).toEqual([]);
+    expect(data.entries.size).toBe(0);
+    expect(entries.size).toBe(0);
+  });
+
   test("reads queue behind writes", async () => {
     const { store } = setup();
     await store.init();
