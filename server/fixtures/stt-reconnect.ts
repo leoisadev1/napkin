@@ -6,6 +6,8 @@ mock.module('../../src/voice/socket', () => ({ openVoiceSocket: async (args: Par
   callbacks = args; connections++;
   return { readyState: WebSocket.OPEN, bufferedAmount: 0, send() { sent++; }, close() {} };
 } }));
+const originalTimer = globalThis.setTimeout;
+globalThis.setTimeout = Object.assign((callback: TimerHandler, ms?: number, ...args: unknown[]) => originalTimer(callback, Math.min(ms ?? 0, 10), ...args), originalTimer);
 const originalNow = Date.now;
 let elapsed = 0;
 Date.now = () => originalNow() + elapsed;
@@ -20,7 +22,7 @@ async function disconnect() {
 }
 try {
   await stt.connect();
-  await disconnect(); await disconnect(); await disconnect();
+  await disconnect(); await disconnect(); await disconnect(); await disconnect(); await disconnect(); await disconnect();
   if (process.argv[2] === 'healthy') {
     elapsed += 30_001;
     stt.send(new Uint8Array([0, 0]));

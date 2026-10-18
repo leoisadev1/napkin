@@ -1,3 +1,4 @@
+import { diagnostic, debugControl } from '../../voice/diagnostics';
 import { ServerStatus, type ChatTurn } from '../../../shared/agent-protocol';
 import type { BoardOp, BoardSummary } from '../../../shared/board';
 import { StretchQuestions } from './questions';
@@ -37,6 +38,9 @@ export class ConversationEngine {
   private context: AudioContext | undefined;
   private stopMic: (() => void) | undefined;
   private voiceGeneration = 0;
+  private voiceConnection: 'connecting' | 'listening' = 'connecting';
+  private cleanupVoice: (() => void) | undefined;
+  private phaseTimer: ReturnType<typeof setTimeout> | undefined;
   private bridge: BoardBridge;
   private options;
   constructor(bridge: BoardBridge, options: { pipeline?: boolean; memory?: ConversationMemory; onTiming?: (event: { stage: 'request' | 'first_op' | 'complete'; ids: string[]; text: string; at: number }) => void } = {}) {
@@ -57,8 +61,14 @@ export class ConversationEngine {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   subscribeLevel = (listener: (level: number) => void) => { this.levels.add(listener); return () => { this.levels.delete(listener); }; };
   subscribeOutputLevel = (listener: (level: number) => void) => { this.outputLevels.add(listener); return () => { this.outputLevels.delete(listener); }; };
-  private update(patch: Partial<Snapshot>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()); }
-  private resting(): ConversationPhase { return this.stt ? { kind: 'listening' } : { kind: 'idle' }; }
+  private update(patch: Partial<Snapshot>) {
+    if (patch.phase && (patch.phase.kind !== this.state.phase.kind || patch.phase.kind === 'error')) {
+      diagnostic('phase', { from: this.state.phase.kind, to: patch.phase.kind });
+      clearTimeout(this.phaseTimer);
+      if (patch.phase.kind === 'error' && this.stt) this.phaseTimer = setTimeout(() => { if (this.state.phase.kind === 'error') this.update({ phase: this.resting() }); }, 4000);
+    }
+    this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()); }
+  private resting(): ConversationPhase { return this.stt ? { kind: this.context && this.context.state !== 'running' ? 'connecting' : this.voiceConnection } : { kind: 'idle' }; }
   async loadStatus(signal: AbortSignal) {
     try {
       const response = await fetch('/api/status', { signal, cache: 'no-store' });
@@ -74,14 +84,16 @@ export class ConversationEngine {
     let context: AudioContext;
     try { context = new AudioContext({ sampleRate: 24000 }); } catch { context = new AudioContext(); }
     this.context = context;
+    this.voiceConnection = 'connecting';
     try {
       await context.resume();
-      const status = await fetch('/api/status').then(response => response.json());
+      const status = await fetch('/api/status', { signal: AbortSignal.timeout(10_000) }).then(response => response.json());
       const parsed = ServerStatus.parse(status); this.update({ voiceAvailable: parsed.voice });
       if (!parsed.voice) throw new Error('Voice is not configured; you can still type');
       if (generation !== this.voiceGeneration) return;
       const stt = new SpeechToText({
         getKeywords: () => boardKeywords(this.bridge.getSummary()),
+        onConnection: state => { if (generation === this.voiceGeneration) { this.voiceConnection = state; this.update({ phase: { kind: state } }); } },
         onPartial: partial => this.receivePartial(partial),
         onPhrase: text => this.receivePhrase(text),
         onTurn: () => this.finishSpokenStretch(),
@@ -89,8 +101,22 @@ export class ConversationEngine {
       });
       this.stt = stt; stt.setMuted(this.state.muted);
       await stt.connect();
+      this.voiceConnection = 'listening';
       if (generation !== this.voiceGeneration) { stt.stop(); return; }
-      const capture = () => captureMicrophone({ context, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)) });
+      let recoveringMic = false;
+      const capture = () => captureMicrophone({ context, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)),
+        onEnded: () => {
+          if (generation !== this.voiceGeneration || recoveringMic) return;
+          recoveringMic = true; this.update({ phase: { kind: 'connecting' } });
+          this.stopMic?.(); this.stopMic = undefined;
+          void capture().then(stop => {
+            if (generation !== this.voiceGeneration) { stop(); return; }
+            this.stopMic = stop;
+            this.update({ phase: this.resting() });
+          }).catch(error => {
+            if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Microphone disconnected. Tap Retry.' } }); }
+          }).finally(() => { recoveringMic = false; });
+        } });
       let stop: () => void;
       try { stop = await capture(); }
       catch (error) {
@@ -101,7 +127,23 @@ export class ConversationEngine {
         await context.resume(); stop = await capture();
       }
       if (generation !== this.voiceGeneration) { stop(); return; }
-      this.stopMic = stop; this.update({ phase: this.resting() });
+      this.stopMic = stop;
+      const resume = () => {
+        diagnostic('audio.context', { state: context.state, visibility: document.visibilityState });
+        if (generation === this.voiceGeneration && context.state !== 'closed' && document.visibilityState === 'visible') {
+          void context.resume().then(() => { if (generation === this.voiceGeneration && context.state === 'running') this.update({ phase: this.resting() }); }).catch(() => {
+            if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: 'Microphone paused. Tap Retry to resume.' } }); }
+          });
+        }
+      };
+      const stateChanged = () => { diagnostic('audio.context', { state: context.state }); if (generation === this.voiceGeneration) this.update({ phase: this.resting() }); };
+      context.addEventListener?.('statechange', stateChanged);
+      if (typeof window !== 'undefined') { window.addEventListener('focus', resume); document.addEventListener('visibilitychange', resume); }
+      const removeDebug = debugControl('suspendAudio', () => { void context.suspend(); });
+      this.cleanupVoice = () => { removeDebug(); context.removeEventListener?.('statechange', stateChanged); if (typeof window !== 'undefined') { window.removeEventListener('focus', resume); document.removeEventListener('visibilitychange', resume); } };
+      diagnostic('audio.context', { state: context.state });
+      this.update({ phase: this.resting() });
+
     } catch (error) {
       if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Could not start microphone' } }); }
     } finally { if (generation !== this.voiceGeneration && context.state !== 'closed') await context.close(); }
@@ -120,6 +162,7 @@ export class ConversationEngine {
   };
   stopVoice = () => {
     ++this.voiceGeneration;
+    diagnostic('voice.stop'); this.cleanupVoice?.(); this.cleanupVoice = undefined; clearTimeout(this.phaseTimer);
     this.stt?.stop(); this.stt = undefined; this.stopMic?.(); this.stopMic = undefined;
     this.interrupt();
     if (this.context) { void this.context.close(); this.context = undefined; }
@@ -152,7 +195,7 @@ export class ConversationEngine {
   }
   receivePartial = (partial: string) => {
     if (this.state.muted) return;
-    if (partial.trim() && partial !== this.state.partial) { this.uncommittedWords = true; this.newSpeech(); }
+    if (partial.trim() && partial !== this.state.partial) { if (this.state.phase.kind === 'error' && this.stt) this.update({ phase: this.resting() }); this.uncommittedWords = true; this.newSpeech(); }
     this.update({ partial });
   };
   /** A committed STT phrase. New speech is queued and never aborts drawing. */

@@ -1,15 +1,15 @@
 import { expect, test } from 'bun:test';
 import { PhraseChunker } from '../src/voice/phrase-chunker';
 
-test('punctuation at segment end commits once; turn end retains incomplete remainder', () => {
+test('punctuation at segment end commits once; turn end commits short unpunctuated requests', () => {
   for (const punctuation of ['.', '?', '!']) {
     const phrases: string[] = []; let partial = '';
     const chunker = new PhraseChunker({ onPhrase: text => phrases.push(text), onPartial: text => { partial = text; } });
     chunker.addText(`habit tracker${punctuation}`); expect(phrases).toEqual([]);
     chunker.endSegment(); expect(phrases).toEqual([`habit tracker${punctuation}`]); expect(partial).toBe('');
     chunker.endTurn(); expect(phrases).toHaveLength(1);
-    chunker.addText('with streaks'); chunker.endTurn(); expect(phrases).toHaveLength(1);
-    chunker.addText('and reminders.'); chunker.endTurn(); expect(phrases.at(-1)).toBe('with streaks and reminders.');
+    chunker.addText('with streaks'); chunker.endTurn(); expect(phrases.at(-1)).toBe('with streaks');
+    chunker.addText('and reminders.'); chunker.endTurn(); expect(phrases.at(-1)).toBe('and reminders.');
   }
 });
 test('four words commit after 250ms with no new word; further text resets timer', async () => {
