@@ -57,9 +57,9 @@ function DarkFilter() {
       <filter id="board-dark" colorInterpolationFilters="sRGB">
         <feColorMatrix type="matrix" values={DARK_MATRIX} />
         <feComponentTransfer>
-          <feFuncR type="gamma" exponent="0.8" />
-          <feFuncG type="gamma" exponent="0.8" />
-          <feFuncB type="gamma" exponent="0.8" />
+          <feFuncR type="gamma" exponent="0.85" />
+          <feFuncG type="gamma" exponent="0.85" />
+          <feFuncB type="gamma" exponent="0.85" />
         </feComponentTransfer>
       </filter>
     </svg>
