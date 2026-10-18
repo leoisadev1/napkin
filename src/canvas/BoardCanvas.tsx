@@ -2,7 +2,7 @@
 // trims menus that make no sense here, and reports the bits of state the shell cares about.
 import { Excalidraw, MainMenu } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { ExcalidrawImperativeAPI, ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
 import { memo, useCallback, useEffect, useRef } from "react";
 import type { PointerSample } from "./bridge";
 
@@ -13,9 +13,13 @@ type Props = {
   onState: (state: CanvasState) => void;
   /** The mouse over the board, in screen coordinates; null on touch or when it leaves the window. */
   onPointer: (sample: PointerSample) => void;
+  /** A saved board to start from. Read once on mount; the board shell remounts the canvas to switch boards. */
+  initialScene?: ExcalidrawInitialDataState;
 };
 
-export const BoardCanvas = memo(function BoardCanvas({ onApi, onState, onPointer }: Props) {
+const DEFAULT_APP_STATE = { currentItemFontFamily: 5, currentItemRoughness: 1, currentItemFillStyle: "solid" } as const;
+
+export const BoardCanvas = memo(function BoardCanvas({ onApi, onState, onPointer, initialScene }: Props) {
   const last = useRef<CanvasState>({ hasContent: false, theme: "light" });
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -53,7 +57,7 @@ export const BoardCanvas = memo(function BoardCanvas({ onApi, onState, onPointer
       <Excalidraw
         excalidrawAPI={onApi}
         onChange={onChange}
-        initialData={{ appState: { currentItemFontFamily: 5, currentItemRoughness: 1, currentItemFillStyle: "solid" } }}
+        initialData={{ ...initialScene, appState: { ...DEFAULT_APP_STATE, ...initialScene?.appState } }}
         UIOptions={{
           canvasActions: { loadScene: false, saveToActiveFile: false, export: false, toggleTheme: true },
           tools: { image: true },

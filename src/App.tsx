@@ -1,6 +1,8 @@
 // App shell: the canvas fills the screen; title, sign-in, transcript and the voice dock float over it.
 import { useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { BoardScreenProps } from "./boards/BoardsApp";
+import { createPersistence } from "./boards/persistence";
 import type { CanvasState } from "./canvas/BoardCanvas";
 import { BoardCanvas } from "./canvas/BoardCanvas";
 import { createBridgeHost } from "./canvas/host";
@@ -31,15 +33,19 @@ function reportCanvasError(error: unknown) {
   console.error("[canvas] board op failed", error);
 }
 
-export default function App() {
+/** One open board. BoardsApp keys it by board id, so switching boards remounts all of this. */
+export default function App({ board }: BoardScreenProps) {
   const host = useMemo(() => createBridgeHost({ onError: reportCanvasError }), []);
+  const persistence = useMemo(() => createPersistence(board, host.bridge, { onError: reportCanvasError }), [board, host]);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [canvas, setCanvas] = useState<CanvasState>({ hasContent: false, theme: "light" });
   const [title, setTitle] = useState(host.bridge.getTitle());
   const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const conversation = useConversation(host.bridge);
+  const conversation = useConversation(host.bridge, persistence.conversation);
 
   useEffect(() => (api === null ? undefined : host.attach(api)), [api, host]);
+  useEffect(() => (api === null ? undefined : persistence.attach(api)), [api, persistence]);
+  useEffect(() => persistence.start(), [persistence]);
   // Dev-only handle for driving the board from the console or browser tests.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -100,7 +106,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <BoardCanvas onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} />
+      <BoardCanvas onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} initialScene={persistence.initialScene} />
       <TitleIsland title={title} onRename={(next) => host.bridge.setTitle(next)} />
       <div className="top-right">
         <SignIn />
