@@ -603,6 +603,7 @@ kbd {
 /* ---- Dock: suggestions, live line, and the bar ------------------------------------------------ */
 
 .dock {
+  --dock-start: 212px;
   position: fixed;
   left: calc(50% + var(--sidebar-w) / 2);
   bottom: calc(var(--space-edge) + 4px + env(safe-area-inset-bottom, 0px));
@@ -1650,9 +1651,16 @@ kbd {
 
 /* ---- Small screens ---------------------------------------------------------------------------- */
 
-@media (max-width: 1100px) {
+/*
+  A narrower board panel has no room to center the dock between the zoom bar and the right edge's mirror of it, so
+  the dock centers in the space right of the zoom bar instead (zoom bar: 12px edge + ~185px + 12px gap). Measured
+  against the panel, not the window, since the boards sidebar can take part of the window.
+*/
+@container (max-width: 1100px) {
   .dock {
-    width: min(560px, calc(100cqw - var(--sidebar-w) - 160px));
+    left: calc((var(--dock-start) + 100cqw - var(--space-edge)) / 2);
+    width: min(560px, calc(100cqw - var(--dock-start) - var(--space-edge)));
+    min-width: 0;
   }
 }
 
