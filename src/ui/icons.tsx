@@ -2,7 +2,6 @@
 // from CSS. Components import from here so the set can be swapped in one place.
 import type { LucideProps } from "lucide-react";
 import {
-  ArrowRight,
   ArrowUp,
   Circle,
   Command,
@@ -27,7 +26,6 @@ import {
   Plus,
   Redo2,
   Search,
-  Sparkles,
   Square,
   SquarePen,
   Sun,
@@ -54,8 +52,6 @@ export const SendIcon = icon(ArrowUp);
 export const TranscriptIcon = icon(MessageSquareText);
 export const CloseIcon = icon(X);
 export const PencilIcon = icon(Pencil);
-export const ArrowRightIcon = icon(ArrowRight);
-export const SparkleIcon = icon(Sparkles);
 export const SunIcon = icon(Sun);
 export const MoonIcon = icon(Moon);
 export const MonitorIcon = icon(Monitor);
