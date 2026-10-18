@@ -152,6 +152,10 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
   // C makes a new board, [ shows or hides the list. Ignored while typing, with modifiers, or while editing board text.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && drawer && open) {
+        setOpen(false);
+        return;
+      }
       if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
       if (document.querySelector(".excalidraw-textEditorContainer textarea") !== null) return;
       if (event.key.toLowerCase() === "c" && !event.shiftKey) {
@@ -164,7 +168,7 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [createBoard, setOpen, open]);
+  }, [createBoard, setOpen, open, drawer]);
 
   const boards = snapshot.status === "ready" ? snapshot.boards : [];
   const thumbs = snapshot.status === "ready" ? snapshot.thumbs : new Map<BoardId, string>();

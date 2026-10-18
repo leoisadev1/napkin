@@ -63,8 +63,9 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  /* Content centered 34px from the top, level with the canvas toolbar and title. */
   height: 52px;
-  padding: 0 8px 0 16px;
+  padding: 16px 8px 0 16px;
   flex: none;
 }
 
@@ -72,7 +73,7 @@
   flex-direction: column;
   height: auto;
   gap: 4px;
-  padding: 10px 0;
+  padding: 19px 0 10px;
 }
 
 .boards-heading {
@@ -114,7 +115,7 @@
 .boards-list {
   flex: 1;
   margin: 0;
-  padding: 2px 8px 12px;
+  padding: 10px 8px 12px;
   overflow-y: auto;
   list-style: none;
   overscroll-behavior: contain;
@@ -414,22 +415,28 @@
   }
 }
 
+/* Sits in Excalidraw's phone footer, just right of its menu button, at the same size. */
 .boards-reveal {
   position: fixed;
-  top: calc(64px + env(safe-area-inset-top, 0px));
-  left: 12px;
+  left: 62px;
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
   z-index: 6;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 9px;
-  background: var(--b-surface);
+  border-radius: 8px;
+  background: transparent;
   color: var(--b-fg);
-  box-shadow: var(--b-shadow);
   cursor: pointer;
+  transition-property: background-color, scale;
+  transition-duration: 120ms;
+}
+
+.boards-reveal:hover {
+  background: var(--b-hover);
 }
 
 .boards-reveal:active {
