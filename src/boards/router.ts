@@ -16,10 +16,6 @@ export function boardPath(id: BoardId): string {
   return `/b/${id}`;
 }
 
-export function currentRoute(): Route {
-  return parseRoute(window.location.pathname);
-}
-
 export function navigateToBoard(id: BoardId, options: { replace?: boolean } = {}): void {
   const url = `${boardPath(id)}${window.location.search}`;
   if (url === `${window.location.pathname}${window.location.search}`) return;

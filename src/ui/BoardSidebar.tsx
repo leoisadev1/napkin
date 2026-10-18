@@ -26,7 +26,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export function relativeTime(at: number, now: number): string {
+function relativeTime(at: number, now: number): string {
   const ago = Math.max(0, now - at);
   if (ago < MINUTE) return "just now";
   if (ago < HOUR) return `${Math.floor(ago / MINUTE)}m ago`;

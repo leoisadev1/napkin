@@ -1,7 +1,7 @@
 // Multiple boards: the store, the URL, the sidebar, and one App per opened board. App is keyed by board id, so
 // switching boards unmounts the old canvas, bridge and conversation (aborting its agent requests) and mounts fresh
 // ones; nothing from the old board can reach the new one.
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
 import { BoardSidebar } from "../ui/BoardSidebar";
 import { useMediaQuery } from "../ui/useMediaQuery";
@@ -9,7 +9,7 @@ import type { BoardSession } from "./persistence";
 import type { RemovedBoard } from "./store";
 import type { BoardStore } from "./store";
 import type { BoardId } from "./schema";
-import { currentRoute, navigateToBoard, subscribeRoute } from "./router";
+import { navigateToBoard, parseRoute, subscribeRoute } from "./router";
 
 const SIDEBAR_KEY = "rtw:sidebar";
 const UNDO_MS = 8000;
@@ -31,10 +31,7 @@ function readSidebarPref(): boolean | null {
 
 function useRoute() {
   const path = useSyncExternalStore(subscribeRoute, () => window.location.pathname);
-  // Re-parse only when the path changes.
-  const [route, setRoute] = useState(currentRoute);
-  useEffect(() => setRoute(currentRoute()), [path]);
-  return route;
+  return useMemo(() => parseRoute(path), [path]);
 }
 
 export type BoardScreenProps = { board: BoardSession };
@@ -56,6 +53,7 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
   // Resolve the URL to a board: open it, or fall back to the most recent board (creating one if there are none).
   const ready = snapshot.status === "ready";
   const routeId = route.kind === "board" ? route.id : null;
+  const openId = session?.meta.id ?? null;
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
@@ -71,7 +69,7 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
         cancelled = true;
       };
     }
-    if (session?.meta.id === routeId) return;
+    if (openId === routeId) return;
     store
       .load(routeId)
       .then((data) => {
@@ -82,8 +80,7 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
     return () => {
       cancelled = true;
     };
-    // The session matters only for its id, checked above; re-running on every session object would reload the board.
-  }, [ready, routeId, store, onError]);
+  }, [ready, routeId, openId, store, onError]);
 
   const setOpen = useCallback(
     (next: boolean) => {
