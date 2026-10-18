@@ -50,17 +50,23 @@ export function zoomToFit(api: ExcalidrawImperativeAPI): void {
     zoomTo(api, 1);
     return;
   }
-  api.scrollToContent(elements, { fitToViewport: true, viewportZoomFactor: 0.8, animate: true, duration: 320 });
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  api.scrollToContent(elements, { fitToViewport: true, viewportZoomFactor: 0.8, animate: !still, duration: 320 });
 }
 
 function isMac(): boolean {
   return /Mac|iPhone|iPad/.test(navigator.platform);
 }
 
-/** Replays Ctrl/Cmd+Z (and Shift for redo) where Excalidraw listens for it. */
+/** Replays a key where Excalidraw listens for it (globally, see BoardCanvas), so its own action runs. */
+function press(init: KeyboardEventInit): void {
+  document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+}
+
+/** Ctrl/Cmd+Z, with Shift for redo. */
 function history(redo: boolean): void {
   const mac = isMac();
-  document.dispatchEvent(new KeyboardEvent("keydown", { key: redo ? "Z" : "z", code: "KeyZ", shiftKey: redo, metaKey: mac, ctrlKey: !mac, bubbles: true, cancelable: true }));
+  press({ key: redo ? "Z" : "z", code: "KeyZ", shiftKey: redo, metaKey: mac, ctrlKey: !mac });
 }
 
 export const undo = () => history(false);
@@ -94,14 +100,9 @@ export function recolorSelection(api: ExcalidrawImperativeAPI, color: Color): vo
   api.updateScene({ elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
 }
 
-/** Deletes the selection and anything bound inside it (labels). Undoable. */
-export function deleteSelection(api: ExcalidrawImperativeAPI): void {
-  const ids = api.getAppState().selectedElementIds;
-  const elements = api.getSceneElements().map((el) => {
-    const container = el.type === "text" ? el.containerId : null;
-    return ids[el.id] === true || (container !== null && ids[container] === true) ? newElementWith(el, { isDeleted: true }) : el;
-  });
-  api.updateScene({ elements, appState: { selectedElementIds: {} }, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+/** Deletes the selection through Excalidraw's own Delete, which also unbinds labels and releases frame children. */
+export function deleteSelection(): void {
+  press({ key: "Delete", code: "Delete" });
 }
 
 export function clearBoard(api: ExcalidrawImperativeAPI): void {

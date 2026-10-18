@@ -94,7 +94,7 @@ export function BoardChrome({ api, canvas, theme, title, setThemePreference, men
         visible={selecting}
         count={canvas.selected}
         onColor={(color) => api !== null && recolorSelection(api, color)}
-        onDelete={() => api !== null && deleteSelection(api)}
+        onDelete={deleteSelection}
       />
       <CommandMenu open={menuOpen} commands={commands} onClose={() => setMenuOpen(false)} />
     </>

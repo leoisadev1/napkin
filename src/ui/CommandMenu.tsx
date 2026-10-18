@@ -48,12 +48,17 @@ export function CommandMenu({ open, commands, onClose }: Props) {
   // Groups render in first-seen order, so keyboard order follows the screen, not the list.
   const order = groups.flatMap((g) => g.items.map((item) => item.index));
 
+  // Focus moves into the menu while it is open and goes back where it was when it closes.
   useEffect(() => {
     if (!open) return;
+    const previous = document.activeElement;
     setQuery("");
     setActive(0);
     setConfirming(null);
     inputRef.current?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
+    };
   }, [open]);
 
   useEffect(() => {
@@ -92,6 +97,11 @@ export function CommandMenu({ open, commands, onClose }: Props) {
         event.preventDefault();
         event.stopPropagation();
         onClose();
+        return;
+      // The input is the menu's only stop; options are reached with the arrows. Tab never leaves the dialog.
+      case "Tab":
+        event.preventDefault();
+        inputRef.current?.focus();
         return;
       default:
         return;
