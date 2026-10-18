@@ -1093,7 +1093,7 @@ kbd {
   }
 }
 
-/* Suggestion chips: quiet pills; the sparkle says where they came from. */
+/* Suggestion chips: quiet text-only pills. */
 .chips {
   display: flex;
   justify-content: center;
@@ -1148,18 +1148,12 @@ kbd {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   max-width: 100%;
   min-width: 0;
-  padding: 0 12px 0 10px;
+  padding: 0 12px;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-sm);
-}
-
-.chip svg {
-  flex: none;
-  color: var(--accent-text);
 }
 
 .chip span {

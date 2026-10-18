@@ -12,7 +12,6 @@ import type { Command } from "./ui/CommandMenu";
 import { EmptyState } from "./ui/EmptyState";
 import { micState, MUTE_KEY } from "./ui/MicToggle";
 import { Keys } from "./ui/Keys";
-import { PartnerCursor } from "./ui/PartnerCursor";
 import { BoardIcon, CommandIcon, MicIcon, MicOffIcon, MoonIcon, NewBoardIcon, PencilIcon, SidebarIcon, SunIcon, TranscriptIcon, TrashIcon } from "./ui/icons";
 import { SignIn } from "./ui/SignIn";
 import { TitleIsland } from "./ui/TitleIsland";
@@ -154,7 +153,6 @@ export default function App({ board, workspace }: BoardScreenProps) {
   return (
     <div className="app">
       <BoardCanvas theme={theme} onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} initialScene={persistence.initialScene} />
-      <PartnerCursor store={host.cursor} api={api} />
       <TitleIsland
         title={title}
         onRename={(next) => host.bridge.setTitle(next)}

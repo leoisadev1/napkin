@@ -1,6 +1,6 @@
 // First-run invitation on the blank canvas: one line on what this is, the "Start talking" button, and three
 // example prompts that run as typed turns.
-import { ArrowRightIcon, Mark, MicIcon, SparkleIcon } from "./icons";
+import { ArrowRightIcon, Mark, MicIcon } from "./icons";
 
 const EXAMPLE_PROMPTS: readonly string[] = [
   "A habit tracker app: the core loop and main screen",
@@ -34,7 +34,6 @@ export function EmptyState({ visible, voiceAvailable, onStart, onPick }: Props) 
         {EXAMPLE_PROMPTS.map((text) => (
           <li key={text}>
             <button type="button" className="prompt" onClick={() => onPick(text)}>
-              <SparkleIcon />
               <span>{text}</span>
               <ArrowRightIcon />
             </button>
