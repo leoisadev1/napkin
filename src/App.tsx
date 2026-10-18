@@ -1,6 +1,8 @@
 // App shell: the canvas fills the screen; title, sign-in, transcript and the voice dock float over it.
 import { useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { BoardScreenProps } from "./boards/BoardsApp";
+import { createPersistence } from "./boards/persistence";
 import type { CanvasState } from "./canvas/BoardCanvas";
 import { BoardCanvas, INITIAL_CANVAS } from "./canvas/BoardCanvas";
 import { createBridgeHost } from "./canvas/host";
@@ -11,7 +13,7 @@ import { EmptyState } from "./ui/EmptyState";
 import { micState, MUTE_KEY } from "./ui/MicToggle";
 import { Keys } from "./ui/Keys";
 import { PartnerCursor } from "./ui/PartnerCursor";
-import { CommandIcon, MicIcon, MicOffIcon, MoonIcon, SunIcon, TranscriptIcon } from "./ui/icons";
+import { BoardIcon, CommandIcon, MicIcon, MicOffIcon, MoonIcon, NewBoardIcon, PencilIcon, SidebarIcon, SunIcon, TranscriptIcon, TrashIcon } from "./ui/icons";
 import { SignIn } from "./ui/SignIn";
 import { TitleIsland } from "./ui/TitleIsland";
 import { TranscriptPanel } from "./ui/TranscriptPanel";
@@ -38,17 +40,23 @@ function reportCanvasError(error: unknown) {
   console.error("[canvas] board op failed", error);
 }
 
-export default function App() {
+/** One open board. BoardsApp keys it by board id, so switching boards remounts all of this. */
+export default function App({ board, workspace }: BoardScreenProps) {
   const host = useMemo(() => createBridgeHost({ onError: reportCanvasError }), []);
+  const persistence = useMemo(() => createPersistence(board, host.bridge, { onError: reportCanvasError }), [board, host]);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
-  const [canvas, setCanvas] = useState<CanvasState>(INITIAL_CANVAS);
+  // A saved board starts out with content, so the empty-state prompt never flashes while the scene loads.
+  const [canvas, setCanvas] = useState<CanvasState>(() => ({ ...INITIAL_CANVAS, hasContent: (persistence.initialScene.elements?.length ?? 0) > 0 }));
   const { theme, setPreference: setThemePreference, toggle: toggleTheme } = useTheme();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const { open: menuOpen, setOpen: setMenuOpen } = workspace.menu;
+  const [renameRequest, setRenameRequest] = useState(0);
   const [title, setTitle] = useState(host.bridge.getTitle());
   const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const conversation = useConversation(host.bridge);
+  const conversation = useConversation(host.bridge, persistence.conversation);
 
   useEffect(() => (api === null ? undefined : host.attach(api)), [api, host]);
+  useEffect(() => (api === null ? undefined : persistence.attach(api)), [api, persistence]);
+  useEffect(() => persistence.start(), [persistence]);
   // Dev-only handle for driving the board from the console or browser tests.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -110,21 +118,49 @@ export default function App() {
         ? [{ id: "stop-talking", group: "Conversation", label: "Stop listening", Icon: MicOffIcon, run: stopVoice }]
         : [{ id: "start-talking", group: "Conversation", label: "Start talking", Icon: MicIcon, keywords: "voice mic", run: () => void startVoice() }];
     const mute: Command[] = live ? [{ id: "mute", group: "Conversation", label: muted ? "Unmute" : "Mute", Icon: muted ? MicIcon : MicOffIcon, shortcut: "M", run: () => setMuted(!muted) }] : [];
+    const id = board.meta.id;
+    const { sidebar } = workspace;
     return [
       ...talk,
       ...mute,
       { id: "transcript", group: "Conversation", label: transcriptOpen ? "Hide conversation" : "Show conversation", Icon: TranscriptIcon, keywords: "transcript history", run: () => setTranscriptOpen((open) => !open) },
+      { id: "board-new", group: "Workspace", label: "New board", Icon: NewBoardIcon, shortcut: "C", keywords: "create add", run: workspace.create },
+      { id: "board-rename", group: "Board", label: "Rename board…", Icon: PencilIcon, keywords: "title name", run: () => setRenameRequest((n) => n + 1) },
+      {
+        id: "board-delete",
+        group: "Board",
+        label: "Delete board",
+        Icon: TrashIcon,
+        keywords: "remove trash",
+        confirm: "Press Enter again to delete this board",
+        run: () => workspace.remove(id),
+      },
+      { id: "sidebar", group: "Workspace", label: sidebar.open ? "Hide sidebar" : "Show sidebar", Icon: SidebarIcon, shortcut: "[", keywords: "boards list panel", run: () => sidebar.setOpen(!sidebar.open) },
     ];
-  }, [voiceAvailable, live, muted, setMuted, startVoice, stopVoice, transcriptOpen]);
+  }, [voiceAvailable, live, muted, setMuted, startVoice, stopVoice, transcriptOpen, workspace, board.meta.id]);
+
+  // Jumping to another board sits at the end of the menu, below the actions on this one.
+  const menuBoards = useMemo(
+    (): Command[] =>
+      workspace.boards
+        .filter((other) => other.id !== board.meta.id)
+        .map((other) => ({ id: `open-${other.id}`, group: "Go to board", label: other.title, Icon: BoardIcon, keywords: "switch open board", run: () => workspace.open(other.id) })),
+    [workspace, board.meta.id],
+  );
 
   const resting = phase.kind === "idle" || phase.kind === "error";
   const showEmpty = resting && !canvas.hasContent && conversation.transcript.length === 0 && conversation.partial.length === 0;
 
   return (
     <div className="app">
-      <BoardCanvas theme={theme} onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} />
+      <BoardCanvas theme={theme} onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} initialScene={persistence.initialScene} />
       <PartnerCursor store={host.cursor} api={api} />
-      <TitleIsland title={title} onRename={(next) => host.bridge.setTitle(next)} />
+      <TitleIsland
+        title={title}
+        onRename={(next) => host.bridge.setTitle(next)}
+        renameRequest={renameRequest}
+        sidebar={workspace.sidebar.open && !workspace.sidebar.drawer ? null : { onShow: () => workspace.sidebar.setOpen(true) }}
+      />
       <div className="top-right">
         <SignIn />
         <div className="panel top-tools">
@@ -164,6 +200,7 @@ export default function App() {
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
         extra={menuExtra}
+        trailing={menuBoards}
       />
       <EmptyState
         visible={showEmpty}

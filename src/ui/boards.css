@@ -1,0 +1,536 @@
+/*
+  Boards sidebar and the app frame, after Linear: the sidebar sits on the window's base color with no border, and the
+  board lives in an inset, rounded panel beside it. Collapsing the sidebar lets the board go full-bleed. On phones the
+  sidebar is a drawer over the board. Colors, type and motion all come from tokens.css; only .boards-* and .board-*
+  selectors live here.
+*/
+
+.boards-shell {
+  --b-width: 240px;
+  --b-inset: 8px;
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  background: var(--bg-sidebar);
+  font-family: var(--font-ui);
+  font-feature-settings: var(--font-features);
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-sm);
+  color: var(--text-1);
+}
+
+/*
+  The board's panel. The transform makes it the containing block for the shell's position: fixed chrome, and the
+  container type lets that chrome size itself against the panel (cqw) rather than the window.
+*/
+.boards-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  margin: var(--b-inset) var(--b-inset) var(--b-inset) 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg-canvas);
+  box-shadow: var(--shadow-frame);
+  transform: translateZ(0);
+  container-type: inline-size;
+  transition-property: margin, border-radius;
+  transition-duration: var(--speed-slow);
+  transition-timing-function: var(--ease-out);
+}
+
+.boards-shell[data-sidebar="closed"] .boards-main,
+.boards-shell[data-drawer="true"] .boards-main {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ---- Sidebar column -------------------------------------------------------------------------- */
+
+.boards-sidebar {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  width: var(--b-width);
+  overflow: hidden;
+  color: var(--text-2);
+  transition: width var(--speed-slow) var(--ease-out);
+}
+
+.boards-sidebar[data-open="false"][data-drawer="false"] {
+  width: 0;
+}
+
+/* Fixed width inside a clipping column, so collapsing slides the content away instead of reflowing it. */
+.boards-inner {
+  display: flex;
+  flex-direction: column;
+  width: var(--b-width);
+  height: 100%;
+  padding: 0 8px;
+  transition: opacity var(--speed) ease;
+}
+
+.boards-sidebar[data-open="false"] .boards-inner {
+  opacity: 0;
+}
+
+.boards-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  /* Centered 38px from the top, level with the board title inside the inset panel. */
+  height: 36px;
+  margin: 20px 0 8px;
+  padding-left: 6px;
+}
+
+.boards-workspace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.boards-workspace-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-semibold);
+  color: var(--text-1);
+}
+
+.boards-icon-btn {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--control);
+  height: var(--control);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition-property: background-color, color, scale;
+  transition-duration: var(--speed-quick);
+  transition-timing-function: ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Linear's compose button: a hairline chip, the one raised control in the sidebar. */
+.boards-new {
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-panel);
+  color: var(--text-2);
+}
+
+/* The header's tooltips hang right-aligned so the clipping column never cuts them off. */
+.boards-header .tip-down {
+  left: auto;
+  right: 0;
+  translate: 0 0;
+}
+
+.boards-icon-btn:active {
+  scale: 0.96;
+}
+
+.boards-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: none;
+}
+
+.boards-nav-item,
+.board-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-weight: var(--weight-medium);
+  letter-spacing: inherit;
+  text-align: left;
+  color: var(--text-2);
+  cursor: pointer;
+  transition-property: background-color, color;
+  transition-duration: var(--speed-quick);
+  transition-timing-function: ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.boards-nav-item > svg,
+.board-row-main > svg {
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--speed-quick) ease;
+}
+
+.boards-nav-label {
+  flex: 1;
+}
+
+.boards-nav-item .keys {
+  opacity: 0;
+  transition: opacity var(--speed-quick) ease;
+}
+
+.boards-section {
+  flex: none;
+  margin: 18px 0 2px;
+  padding: 0 8px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0;
+  line-height: 24px;
+  color: var(--text-3);
+}
+
+.boards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+  margin: 0 -8px;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.board-row {
+  position: relative;
+  flex: none;
+  border-radius: var(--radius-sm);
+}
+
+.board-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-row[data-active="true"] .board-row-main {
+  background: var(--sidebar-active);
+  color: var(--text-1);
+}
+
+.board-row[data-active="true"] .board-row-main > svg {
+  color: var(--text-1);
+}
+
+.board-row:has(.board-row-more) .board-row-title {
+  /* Room for the actions button, which overlays the end of the row. */
+  padding-right: 4px;
+}
+
+.board-rename {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  margin-right: -4px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  outline: none;
+  background: var(--bg-input);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--text-1);
+}
+
+.board-row-more {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition-property: opacity, background-color, color;
+  transition-duration: var(--speed-quick);
+  transition-timing-function: ease;
+}
+
+.board-row[data-mode="menu"] .board-row-more,
+.board-row-more:focus-visible {
+  opacity: 1;
+}
+
+.board-row-more[aria-expanded="true"] {
+  background: var(--sidebar-active);
+  color: var(--text-1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .boards-icon-btn:hover {
+    background: var(--sidebar-hover);
+    color: var(--text-1);
+  }
+
+  .boards-new:hover {
+    background: var(--bg-panel);
+    box-shadow: var(--shadow-float);
+  }
+
+  .boards-nav-item:hover,
+  .board-row:not([data-active="true"]) .board-row-main:hover {
+    background: var(--sidebar-hover);
+    color: var(--text-1);
+  }
+
+  .boards-nav-item:hover > svg,
+  .board-row-main:hover > svg {
+    color: var(--text-2);
+  }
+
+  .boards-nav-item:hover .keys {
+    opacity: 1;
+  }
+
+  .board-row:hover .board-row-more {
+    opacity: 1;
+  }
+
+  .board-row-more:hover {
+    background: var(--sidebar-active);
+    color: var(--text-1);
+  }
+}
+
+/* Touch has no hover, so the actions button stays visible. */
+@media (hover: none) and (pointer: coarse) {
+  .board-row-more {
+    opacity: 1;
+  }
+}
+
+.boards-shell :is(button, input):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* ---- Row menu -------------------------------------------------------------------------------- */
+
+.board-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-float);
+  transform-origin: top right;
+  animation: board-menu-in var(--speed) var(--ease-out);
+}
+
+@keyframes board-menu-in {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+.board-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--control);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.board-menu button > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.board-menu button:is(:hover, :focus-visible) {
+  outline: none;
+  background: var(--bg-hover);
+}
+
+.board-menu .danger,
+.board-menu .danger > svg {
+  color: var(--danger);
+}
+
+/* ---- Undo toast ------------------------------------------------------------------------------ */
+
+.boards-undo {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 40px);
+  height: 40px;
+  padding: 0 6px 0 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-float);
+  color: var(--text-2);
+  animation: boards-toast-in var(--speed-slow) var(--ease-out);
+}
+
+.boards-undo > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+@keyframes boards-toast-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+.boards-undo-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.boards-undo strong {
+  font-weight: var(--weight-medium);
+  color: var(--text-1);
+}
+
+.boards-undo button {
+  flex: none;
+  height: var(--control);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  letter-spacing: inherit;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background-color var(--speed-quick) ease;
+}
+
+.boards-undo button:hover {
+  background: var(--bg-active);
+}
+
+/* ---- Phones: a drawer over the board --------------------------------------------------------- */
+
+.boards-sidebar[data-drawer="true"] {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 15;
+  width: min(296px, 86vw);
+  background: var(--bg-sidebar);
+  box-shadow: var(--shadow-modal);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  translate: -105% 0;
+  transition: translate 320ms var(--ease-drawer);
+}
+
+.boards-sidebar[data-drawer="true"][data-open="true"] {
+  translate: 0 0;
+}
+
+.boards-sidebar[data-drawer="true"] .boards-inner {
+  width: 100%;
+  opacity: 1;
+}
+
+.boards-sidebar[data-drawer="true"] .boards-header {
+  margin-top: 12px;
+}
+
+/* Bigger touch targets in the drawer. */
+.boards-sidebar[data-drawer="true"] :is(.boards-nav-item, .board-row-main) {
+  height: 36px;
+}
+
+.boards-sidebar[data-drawer="true"] .board-row-more {
+  top: 4px;
+  width: 28px;
+  height: 28px;
+}
+
+.boards-sidebar[data-drawer="true"] .boards-nav-item .keys {
+  display: none;
+}
+
+.boards-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 14;
+  background: var(--scrim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 240ms ease;
+}
+
+.boards-scrim[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 730px) {
+  .boards-undo {
+    right: 12px;
+    left: 12px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boards-sidebar,
+  .boards-main,
+  .boards-inner,
+  .boards-scrim {
+    transition-duration: 0ms;
+  }
+
+  .boards-undo,
+  .board-menu {
+    animation: none;
+  }
+}

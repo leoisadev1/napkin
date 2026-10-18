@@ -4,7 +4,7 @@
 import { Excalidraw } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { OrderedExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { AppState, ExcalidrawImperativeAPI, ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { PointerSample } from "./bridge";
 import { FrameLayer } from "./FrameLayer";
@@ -30,6 +30,8 @@ type Props = {
   onState: (state: CanvasState) => void;
   /** The mouse over the board, in screen coordinates; null on touch or when it leaves the window. */
   onPointer: (sample: PointerSample) => void;
+  /** A saved board to start from. Read once on mount; the board shell remounts the canvas to switch boards. */
+  initialScene?: ExcalidrawInitialDataState;
 };
 
 /** Board units between grid dots at 100%. */
@@ -39,7 +41,7 @@ function same(a: CanvasState, b: CanvasState): boolean {
   return a.hasContent === b.hasContent && a.tool === b.tool && a.selected === b.selected && a.editingText === b.editingText && a.zoom === b.zoom;
 }
 
-export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, onPointer }: Props) {
+export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, onPointer, initialScene }: Props) {
   const last = useRef<CanvasState>(INITIAL_CANVAS);
   const rootRef = useRef<HTMLDivElement>(null);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
@@ -69,6 +71,25 @@ export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, on
       root.removeEventListener("pointerleave", onLeave);
     };
   }, [onPointer]);
+
+  // When the board's panel resizes (the sidebar opening or closing, the window changing), keep what was in the middle
+  // in the middle, instead of letting the drawing slide with the panel's left edge.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root === null || api === null) return;
+    let last: { width: number; height: number } | null = null;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry === undefined) return;
+      const { width, height } = entry.contentRect;
+      const previous = last;
+      last = { width, height };
+      if (previous === null || (previous.width === width && previous.height === height)) return;
+      const { scrollX, scrollY, zoom } = api.getAppState();
+      api.updateScene({ appState: { scrollX: scrollX + (width - previous.width) / 2 / zoom.value, scrollY: scrollY + (height - previous.height) / 2 / zoom.value } });
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [api]);
 
   const onChange = useCallback(
     (elements: readonly OrderedExcalidrawElement[], appState: AppState) => {
@@ -111,8 +132,12 @@ export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, on
         // Tool keys work wherever focus is (except text fields), not only after a click on the canvas.
         handleKeyboardGlobally
         initialData={{
+          ...initialScene,
           appState: {
+            ...initialScene?.appState,
+            // The dot grid shows through, and the app owns the theme; a saved board keeps only its camera.
             viewBackgroundColor: "transparent",
+            theme,
             // Frames are drawn by FrameLayer; Excalidraw keeps their names, clipping and behavior.
             frameRendering: { enabled: true, name: true, outline: false, clip: true },
             currentItemFontFamily: BOARD_FONT,

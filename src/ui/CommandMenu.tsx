@@ -1,6 +1,7 @@
 // ⌘K: every action on the board in one filterable list, Linear style. It opens and closes instantly (it is used too
 // often to animate), arrow keys move, Enter runs, Escape closes. Actions marked `confirm` ask for a second Enter.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ComponentType, KeyboardEvent } from "react";
 import { EnterIcon, SearchIcon } from "./icons";
 import { Keys } from "./Keys";
@@ -111,7 +112,8 @@ export function CommandMenu({ open, commands, onClose }: Props) {
   if (!open) return null;
   const activeCommand = shown[active];
 
-  return (
+  // Portaled so the scrim covers the whole window, sidebar included, not just the board's panel.
+  return createPortal(
     <div className="cmdk-scrim" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="cmdk" role="dialog" aria-modal="true" aria-label="Command menu" onKeyDown={onKeyDown}>
         <div className="cmdk-search">
@@ -170,6 +172,7 @@ export function CommandMenu({ open, commands, onClose }: Props) {
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

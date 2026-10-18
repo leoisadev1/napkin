@@ -25,9 +25,11 @@ type Props = {
   setMenuOpen: (open: boolean) => void;
   /** Conversation actions that belong in the menu too. */
   extra: readonly Command[];
+  /** Listed after everything else (other boards to jump to). */
+  trailing: readonly Command[];
 };
 
-export function BoardChrome({ api, canvas, theme, title, setThemePreference, menuOpen, setMenuOpen, extra }: Props) {
+export function BoardChrome({ api, canvas, theme, title, setThemePreference, menuOpen, setMenuOpen, extra, trailing }: Props) {
   // ⌘K / Ctrl+K and "?" open our menu; Excalidraw's own palette (Ctrl+/, ⌘⇧P) and help dialog never get the keys.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -46,7 +48,7 @@ export function BoardChrome({ api, canvas, theme, title, setThemePreference, men
   }, [menuOpen, setMenuOpen]);
 
   const commands = useMemo((): Command[] => {
-    if (api === null) return [...extra];
+    if (api === null) return [...extra, ...trailing];
     const tools: Command[] = TOOL_GROUPS.flat().map(({ tool, label, key, Icon }) => ({
       id: `tool-${tool}`,
       group: "Tools",
@@ -69,9 +71,10 @@ export function BoardChrome({ api, canvas, theme, title, setThemePreference, men
       { id: "undo", group: "Board", label: "Undo", Icon: UndoIcon, shortcut: `${MOD} Z`, run: undo },
       { id: "redo", group: "Board", label: "Redo", Icon: RedoIcon, shortcut: `${MOD} ⇧ Z`, run: redo },
       { id: "export", group: "Board", label: "Export as PNG", Icon: DownloadIcon, keywords: "download image save", run: () => void exportPng(api, { name: title, dark: theme === "dark" }) },
-      { id: "clear", group: "Board", label: "Clear board", Icon: TrashIcon, keywords: "delete reset", confirm: "Press Enter again to clear the board", run: () => clearBoard(api) },
+      { id: "clear", group: "Board", label: "Clear board", Icon: TrashIcon, keywords: "erase reset", confirm: "Press Enter again to clear the board", run: () => clearBoard(api) },
+      ...trailing,
     ];
-  }, [api, extra, setThemePreference, theme, title]);
+  }, [api, extra, trailing, setThemePreference, theme, title]);
 
   const pick = (tool: BoardTool) => {
     if (api !== null) setTool(api, tool);

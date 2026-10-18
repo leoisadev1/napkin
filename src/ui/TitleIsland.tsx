@@ -1,16 +1,37 @@
-// Board title, edited inline. The agent can also rename the board through set_title.
+// Board title, edited inline. The agent can also rename the board through set_title, and ⌘K through renameRequest.
+// While the boards sidebar is hidden (collapsed, or a closed drawer on phones) it leads with the button that shows it.
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import { Mark } from "./icons";
+import { SidebarIcon } from "./icons";
+import { Keys } from "./Keys";
 
-export function TitleIsland({ title, onRename }: { title: string; onRename: (title: string) => void }) {
+type Props = {
+  title: string;
+  onRename: (title: string) => void;
+  /** Bumped to start editing from elsewhere. */
+  renameRequest: number;
+  /** Set while the sidebar is out of view. */
+  sidebar: { onShow: () => void } | null;
+};
+
+export function TitleIsland({ title, onRename, renameRequest, sidebar }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef(title);
+  useEffect(() => {
+    titleRef.current = title;
+  }, [title]);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
   }, [editing]);
+
+  useEffect(() => {
+    if (renameRequest === 0) return;
+    setDraft(titleRef.current);
+    setEditing(true);
+  }, [renameRequest]);
 
   const commit = () => {
     setEditing(false);
@@ -26,10 +47,15 @@ export function TitleIsland({ title, onRename }: { title: string; onRename: (tit
   };
 
   return (
-    <div className="title-island">
-      <span className="title-mark">
-        <Mark size={18} />
-      </span>
+    <div className="title-island" data-toggle={sidebar !== null}>
+      {sidebar !== null && (
+        <button type="button" className="ghost-btn title-toggle" aria-label="Show sidebar" aria-keyshortcuts="[" onClick={sidebar.onShow}>
+          <SidebarIcon />
+          <span className="tip tip-down" role="presentation">
+            Show sidebar<Keys combo="[" />
+          </span>
+        </button>
+      )}
       {editing ? (
         <input
           ref={inputRef}

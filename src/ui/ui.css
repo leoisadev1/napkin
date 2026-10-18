@@ -206,11 +206,19 @@ kbd {
   gap: 2px;
   height: 36px;
   padding: 0 4px 0 8px;
-  max-width: min(320px, calc(50vw - 260px));
+  max-width: min(320px, calc(50cqw - 260px));
   background: var(--bg-panel);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-panel);
   color: var(--text-1);
+}
+
+.title-island[data-toggle="true"] {
+  padding-left: 4px;
+}
+
+.title-toggle {
+  margin-right: 2px;
 }
 
 .title-mark {
@@ -511,7 +519,7 @@ kbd {
   position: fixed;
   top: var(--space-edge);
   left: 50%;
-  max-width: calc(100vw - 24px);
+  max-width: calc(100cqw - 24px);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -596,8 +604,8 @@ kbd {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: min(560px, calc(100vw - var(--sidebar-w) - 400px));
-  min-width: min(440px, calc(100vw - 24px));
+  width: min(560px, calc(100cqw - var(--sidebar-w) - 400px));
+  min-width: min(440px, calc(100cqw - 24px));
   translate: -50% 0;
   pointer-events: none;
 }
@@ -1183,7 +1191,7 @@ kbd {
   bottom: var(--space-edge);
   display: flex;
   flex-direction: column;
-  width: min(340px, calc(100vw - 24px));
+  width: min(340px, calc(100cqw - 24px));
   background: var(--bg-panel);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);
@@ -1638,13 +1646,13 @@ kbd {
 
 @media (max-width: 1100px) {
   .dock {
-    width: min(560px, calc(100vw - var(--sidebar-w) - 160px));
+    width: min(560px, calc(100cqw - var(--sidebar-w) - 160px));
   }
 }
 
 @media (max-width: 730px) {
   .title-island {
-    max-width: calc(100vw - 200px);
+    max-width: calc(100cqw - 200px);
   }
 
   .top-tools .ghost-btn[aria-keyshortcuts] {
@@ -1718,7 +1726,7 @@ kbd {
 
   .dock {
     left: 50%;
-    width: calc(100vw - 24px);
+    width: calc(100cqw - 24px);
     min-width: 0;
   }
 

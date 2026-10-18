@@ -49,6 +49,10 @@
 
   /* ---- Light ---- */
   --bg-canvas: #f9f9fa;
+  /* The window behind the board's panel, which the sidebar sits on. */
+  --bg-sidebar: #f1f1f3;
+  --sidebar-hover: rgb(0 0 0 / 0.04);
+  --sidebar-active: rgb(0 0 0 / 0.055);
   --grid-dot: #d9d9de;
   --bg-frame: rgb(255 255 255 / 0.82);
   --bg-panel: #ffffff;
@@ -78,6 +82,7 @@
   --shadow-panel: 0 0 0 1px var(--border), 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 6px -2px rgb(0 0 0 / 0.06);
   --shadow-float: 0 0 0 1px var(--border), 0 3px 12px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.04);
   --shadow-modal: 0 0 0 1px var(--border), 0 16px 48px rgb(0 0 0 / 0.14), 0 4px 12px rgb(0 0 0 / 0.06);
+  --shadow-frame: 0 0 0 1px var(--border), 0 1px 3px rgb(0 0 0 / 0.04);
   --scrim: rgb(20 21 26 / 0.08);
 
   color-scheme: light;
@@ -88,6 +93,9 @@
 
 :root[data-theme="dark"] {
   --bg-canvas: #0b0c0d;
+  --bg-sidebar: #070708;
+  --sidebar-hover: rgb(255 255 255 / 0.04);
+  --sidebar-active: rgb(255 255 255 / 0.07);
   --grid-dot: #26272b;
   --bg-frame: rgb(20 21 23 / 0.86);
   --bg-panel: #141516;
@@ -116,6 +124,7 @@
   --shadow-panel: 0 0 0 1px var(--border), inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 2px 8px rgb(0 0 0 / 0.35);
   --shadow-float: 0 0 0 1px var(--border-strong), inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 4px 24px rgb(0 0 0 / 0.45);
   --shadow-modal: 0 0 0 1px var(--border-strong), inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 16px 64px rgb(0 0 0 / 0.6);
+  --shadow-frame: 0 0 0 1px var(--border);
   --scrim: rgb(0 0 0 / 0.45);
 
   color-scheme: dark;

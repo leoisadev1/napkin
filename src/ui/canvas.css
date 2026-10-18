@@ -256,3 +256,20 @@
   box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.03);
   transform-origin: 0 0;
 }
+
+/* Opening a board (or switching to one) fades its drawing in over the grid, instead of popping in a frame late. */
+.canvas .excalidraw {
+  animation: canvas-in var(--speed) var(--ease-out);
+}
+
+@keyframes canvas-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas .excalidraw {
+    animation: none;
+  }
+}

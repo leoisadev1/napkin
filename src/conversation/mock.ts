@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BoardOp } from "../../shared/board";
 import type { BoardBridge, Conversation, ConversationPhase, TranscriptEntry } from "./types";
+import type { ConversationOptions } from "./memory";
+import { EMPTY_MEMORY } from "./memory";
 
 type Step =
   | { kind: "op"; op: BoardOp }
@@ -464,12 +466,18 @@ const PAUSE_MS = 3200;
 let entrySeq = 0;
 const entryId = () => `t${Date.now().toString(36)}${(entrySeq++).toString(36)}`;
 
-export function useMockConversation(bridge: BoardBridge): Conversation {
+export function useMockConversation(bridge: BoardBridge, options: ConversationOptions = {}): Conversation {
   const [phase, setPhase] = useState<ConversationPhase>({ kind: "idle" });
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>(() => options.memory?.transcript ?? []);
   const [partial, setPartial] = useState("");
   const [sketchJobs, setSketchJobs] = useState(0);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>(() => options.memory?.suggestions ?? []);
+  // The mock has no agent history; it remembers only what the shell shows.
+  const onMemory = useRef(options.onMemory);
+  onMemory.current = options.onMemory;
+  useEffect(() => {
+    onMemory.current?.({ ...EMPTY_MEMORY, transcript, suggestions });
+  }, [transcript, suggestions]);
   const [pendingPhrases, setPendingPhrases] = useState<Conversation["pendingPhrases"]>([]);
   const [refineJobs, setRefineJobs] = useState(0);
   const [muted, setMutedState] = useState(false);
