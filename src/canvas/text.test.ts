@@ -2,25 +2,30 @@
 import { describe, expect, test } from "bun:test";
 import { stickySize } from "./text";
 
-const PICK =
-  "Pick: an underserved audience because specific unmet needs create a clearer reason to choose you, and a narrow first audience makes onboarding, messaging and the first feature list far easier to get right.";
+const PICK = "Pick: Sintra — palaces beat a crowded beach in October";
+const LONG =
+  "An underserved audience, because specific unmet needs create a clearer reason to choose you, and a narrow first audience makes onboarding, messaging and the first feature list far easier to get right.";
 
 describe("stickySize", () => {
-  test("a short note keeps the classic near-square size and full font", () => {
-    const s = stickySize("Habit tracking app — explore a distinctive angle");
-    expect(s.w).toBe(200);
-    expect(s.fontSize).toBe(20);
-    expect(s.h).toBeLessThanOrEqual(s.w);
+  test("a short note is a landscape card at the shared font size", () => {
+    const s = stickySize("Book Sintra tickets early");
+    expect(s.w).toBe(220);
+    expect(s.fontSize).toBe(18);
+    expect(s.h).toBeLessThan(s.w);
   });
 
-  test("a long note grows wider before taller, capped at 360, with a smaller font", () => {
+  test("a Pick is a wide callout of at most two lines", () => {
     const s = stickySize(PICK);
-    expect(s.w).toBeGreaterThan(200);
-    expect(s.w).toBeLessThanOrEqual(360);
-    // Between 1:1 and 3:2 landscape, never a tall narrow wall.
+    expect(s.w).toBeGreaterThan(300);
+    expect(s.w).toBeLessThanOrEqual(440);
+    expect(s.w / s.h).toBeGreaterThanOrEqual(2.5);
+  });
+
+  test("a long note grows wider before taller, capped at 400, never a tall wall", () => {
+    const s = stickySize(LONG);
+    expect(s.w).toBeLessThanOrEqual(400);
     expect(s.h).toBeLessThanOrEqual(s.w);
-    expect(s.w / s.h).toBeLessThanOrEqual(1.5);
-    expect(s.fontSize).toBeLessThan(20);
+    expect(s.fontSize).toBe(18);
   });
 
   test("width grows with length", () => {

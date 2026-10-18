@@ -29,8 +29,8 @@ export type LaidNode = {
   text: TextBox;
   /** Funnel bands only: closed outline, first point repeated last. */
   polygon: Point[] | null;
-  /** Mindmap center and timeline cards get their own weight. */
-  role: "node" | "center";
+  /** The mindmap center is a solid hub and its outermost ideas are quiet leaves; everything else is a plain node. */
+  role: "node" | "center" | "leaf";
 };
 
 export type Tone = "ink" | "soft" | "faint";
@@ -66,6 +66,8 @@ export type DiagramLayout = {
 // ---- Text and shape sizing --------------------------------------------------------------------
 
 export const NODE_FONT = 20;
+/** Outermost mindmap ideas: a step below nodes, so the map reads hub, arms, details. */
+const LEAF_FONT = 17;
 const TITLE_FONT = 26;
 const SMALL_FONT = 17;
 /** Matches Excalidraw's BOUND_TEXT_PADDING; the shapes keep extra room on top of it. */
@@ -210,20 +212,6 @@ function midTop(r: Rect): Point {
 }
 function midBottom(r: Rect): Point {
   return { x: r.x + r.w / 2, y: r.y + r.h + GAP_OUT };
-}
-
-/** Where the ray from the center of an ellipse inscribed in `r` toward `toward` leaves it, plus a gap. */
-function ellipseEdge(r: Rect, toward: Point, gap: number): Point {
-  const c = center(r);
-  const dx = toward.x - c.x;
-  const dy = toward.y - c.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const a = r.w / 2;
-  const b = r.h / 2;
-  const t = 1 / Math.sqrt((ux * ux) / (a * a) + (uy * uy) / (b * b));
-  return { x: c.x + ux * (t + gap), y: c.y + uy * (t + gap) };
 }
 
 /** Label for a connector segment: above a horizontal run, right of a vertical one. */
@@ -746,10 +734,15 @@ function sizeCenter(measure: Measure, node: DiagramNode): Sized {
  * the start fanned a little toward the target so sibling links do not all leave from one point.
  */
 function centerEdge(r: Rect, shape: NodeShape, toward: Point, side: 1 | -1): Point {
-  if (shape === "ellipse") return ellipseEdge(r, toward, GAP_OUT);
   const c = center(r);
-  const spread = Math.max(-r.h * 0.32, Math.min(r.h * 0.32, (toward.y - c.y) * 0.4));
-  return { x: side === 1 ? r.x + r.w + GAP_OUT : r.x - GAP_OUT, y: c.y + spread };
+  const limit = r.h * (shape === "ellipse" ? 0.22 : 0.32);
+  const spread = Math.max(-limit, Math.min(limit, (toward.y - c.y) * 0.3));
+  if (shape !== "ellipse") return { x: side === 1 ? r.x + r.w + GAP_OUT : r.x - GAP_OUT, y: c.y + spread };
+  // On the ellipse's outline at that height, so every arm leaves from the hub's side rather than its top or bottom.
+  const a = r.w / 2;
+  const b = r.h / 2;
+  const half = a * Math.sqrt(Math.max(0, 1 - (spread * spread) / (b * b)));
+  return { x: c.x + side * (half + GAP_OUT), y: c.y + spread };
 }
 
 function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
@@ -777,15 +770,29 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
       id,
       d === 0
         ? sizeCenter(measure, node)
-        : sizeNode(measure, node, { size: d === 1 ? NODE_FONT : 18, maxWidth: d === 1 ? 160 : 150, color: branchColor.get(id) ?? node.color }),
+        : sizeNode(measure, node, { size: d === 1 ? NODE_FONT : LEAF_FONT, maxWidth: d === 1 ? 150 : 160, color: branchColor.get(id) ?? node.color }),
     );
     for (const c of children.get(id) ?? []) size(c, d + 1);
   };
   size(centerNode.id, 0);
 
-  const V_GAP = 22;
-  const BLOCK_GAP = 34;
-  const H_GAP = 64;
+  // Siblings share one width and the arms share another, so every column of the map has a straight edge.
+  const evenWidth = (ids: readonly NodeId[]) => {
+    const list = ids.map((i) => sized.get(i)).filter((v): v is Sized => v !== undefined && v.shape === "box");
+    const w = Math.max(0, ...list.map((v) => v.w));
+    for (const v of list) sized.set(v.node.id, { ...v, w });
+  };
+  evenWidth(branches);
+  const evenBelow = (id: NodeId) => {
+    const kids = children.get(id) ?? [];
+    if (kids.length > 0) evenWidth(kids);
+    for (const c of kids) evenBelow(c);
+  };
+  for (const b of branches) evenBelow(b);
+
+  const V_GAP = 18;
+  const BLOCK_GAP = 40;
+  const H_GAP = 84;
   const heightOf = new Map<NodeId, number>();
   const blockHeight = (id: NodeId): number => {
     const kids = children.get(id) ?? [];
@@ -821,12 +828,22 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
   const centerRect = nodes[0]?.rect ?? { x: 0, y: 0, w: 0, h: 0 };
   const connectors: Connector[] = [];
 
-  // A soft S: leave horizontally, bend, arrive horizontally. Nearly level links stay straight.
+  // A cubic S that leaves and arrives horizontally, sampled finely enough to read as a smooth line. Excalidraw's own
+  // curve through a few points overshoots into loops on short, steep links. Nearly level links stay straight.
   const curve = (a: Point, b: Point): Point[] => {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    if (Math.abs(dy) < 6) return [a, b];
-    return [a, { x: a.x + dx * 0.35, y: a.y + dy * 0.15 }, { x: a.x + dx * 0.65, y: a.y + dy * 0.85 }, b];
+    if (Math.abs(b.y - a.y) < 6) return [a, b];
+    const pull = (b.x - a.x) * 0.55;
+    const c1 = { x: a.x + pull, y: a.y };
+    const c2 = { x: b.x - pull, y: b.y };
+    const steps = 16;
+    return Array.from({ length: steps + 1 }, (_, i) => {
+      const t = i / steps;
+      const u = 1 - t;
+      return {
+        x: u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x,
+        y: u * u * u * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y,
+      };
+    });
   };
 
   const placeSubtree = (id: NodeId, side: 1 | -1, edgeX: number, top: number) => {
@@ -835,9 +852,9 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
     const h = heightOf.get(id) ?? s.h;
     const cy = top + h / 2;
     const x = side === 1 ? edgeX : edgeX - s.w;
-    const node = laid(s, { x, y: cy - s.h / 2 });
-    nodes.push(node);
     const kids = children.get(id) ?? [];
+    const node = laid(s, { x, y: cy - s.h / 2 }, (depthOf.get(id) ?? 1) >= 2 && kids.length === 0 ? "leaf" : "node");
+    nodes.push(node);
     const span = kids.reduce((acc, c) => acc + (heightOf.get(c) ?? 0), 0) + V_GAP * Math.max(0, kids.length - 1);
     let y = top + (h - span) / 2;
     const nextEdge = side === 1 ? node.rect.x + node.rect.w + H_GAP : node.rect.x - H_GAP;
@@ -847,7 +864,7 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
       if (child !== undefined) {
         const a = side === 1 ? midRight(node.rect) : midLeft(node.rect);
         const b = side === 1 ? midLeft(child.rect) : midRight(child.rect);
-        connectors.push({ key: `${id}>${c}`, from: id, to: c, points: curve(a, b), curved: true, head: "none", color: node.color, label: null });
+        connectors.push({ key: `${id}>${c}`, from: id, to: c, points: curve(a, b), curved: false, head: "none", color: node.color, label: null });
       }
       y += (heightOf.get(c) ?? 0) + V_GAP;
     }
@@ -867,7 +884,7 @@ function layoutMindmap(measure: Measure, spec: DiagramSpec): DiagramLayout {
       if (branch !== undefined) {
         const end = side === 1 ? midLeft(branch.rect) : midRight(branch.rect);
         const start = centerEdge(centerRect, centerSized.shape, end, side);
-        connectors.push({ key: `${centerNode.id}>${b}`, from: centerNode.id, to: b, points: curve(start, end), curved: true, head: "none", color: branch.color, label: null });
+        connectors.push({ key: `${centerNode.id}>${b}`, from: centerNode.id, to: b, points: curve(start, end), curved: false, head: "none", color: branch.color, label: null });
       }
       y += h + BLOCK_GAP;
     }

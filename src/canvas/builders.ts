@@ -527,7 +527,8 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       roughness: ROUGHNESS,
       roundness: device === "phone" ? { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 40 } : { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 12 },
     },
-    { id: id("title"), type: "text", x: 0, y: -32, text: title, fontSize: 18, fontFamily: BOARD_FONT, strokeColor: INK_SOFT },
+    // Same weight as a diagram title, so a screen and a diagram side by side read as peers.
+    { id: id("title"), type: "text", x: 0, y: -50, text: title, fontSize: 26, fontFamily: BOARD_FONT, strokeColor: INK },
   ];
   if (device === "phone") {
     chrome.push({

@@ -12,7 +12,7 @@ import type { DiagramSpec } from "./diagramLayout";
 import type { Point } from "./geometry";
 import type { NodeMeta } from "./meta";
 import { metaData } from "./meta";
-import { BOARD_FONT, EDGE, EDGE_STROKE, HAIRLINE, INK, INK_FAINT, INK_SOFT, ROUGHNESS, STICKY_FILL, STICKY_STROKE, STROKE, SWATCHES } from "./palette";
+import { BOARD_FONT, EDGE, EDGE_STROKE, HAIRLINE, INK, INK_FAINT, INK_SOFT, ON_SOLID, ROUGHNESS, SCREEN, STICKY_FILL, STICKY_STROKE, STROKE, SWATCHES } from "./palette";
 
 export type DiagramIds = {
   /** Element id for a diagram-level part: "title", "axis", a connector key. */
@@ -229,11 +229,18 @@ function nodeElements(node: LaidNode, rootId: string, textId: string): Excalidra
     roughness: ROUGHNESS,
   };
   const label = { text: node.text.text, fontSize: node.text.size, fontFamily: BOARD_FONT, strokeColor: INK };
+  // The hub is solid in its color with white words; leaves are white cards with a hairline in their arm's color.
+  const role =
+    node.role === "center"
+      ? { backgroundColor: swatch.solid, strokeColor: swatch.solid, label: { ...label, strokeColor: ON_SOLID } }
+      : node.role === "leaf"
+        ? { backgroundColor: SCREEN, strokeWidth: HAIRLINE, label }
+        : { label };
   switch (node.shape) {
     case "box":
-      return [{ ...base, type: "rectangle", roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS }, label }];
+      return [{ ...base, type: "rectangle", roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS }, ...role }];
     case "ellipse":
-      return [{ ...base, type: "ellipse", strokeWidth: node.role === "center" ? 2 : STROKE, label }];
+      return [{ ...base, type: "ellipse", ...role }];
     case "diamond":
       return [{ ...base, type: "diamond", label }];
     case "sticky":
