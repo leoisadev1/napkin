@@ -34,6 +34,38 @@ type Props = {
   initialScene?: ExcalidrawInitialDataState;
 };
 
+/**
+ * Dark mode for the board. Excalidraw's own filter (invert, then hue-rotate) bends hues on the way: yellows go olive
+ * and strokes go dull. This one flips lightness around luma and keeps most of the color difference, so a hue stays
+ * itself, then lifts the midtones so strokes read brighter on the dark board than they do on the light one.
+ * canvas.css points Excalidraw's --theme-filter here.
+ */
+const LUMA = [0.2126, 0.7152, 0.0722] as const;
+/** Luma 0 lands at 0.94 and luma 1 at 0.06: the board never reaches pure black or white. */
+const TOP = 0.94;
+const SPAN = 0.88;
+/** Chroma kept. A little less than all, because a dark tint at full chroma turns muddy (yellow most of all). */
+const CHROMA = 0.78;
+const DARK_MATRIX = [0, 1, 2]
+  .map((row) => [...LUMA.map((w, col) => (row === col ? CHROMA : 0) - (CHROMA + SPAN) * w), 0, TOP].map((v) => v.toFixed(5)).join(" "))
+  .concat("0 0 0 1 0")
+  .join(" ");
+
+function DarkFilter() {
+  return (
+    <svg className="dark-filter" aria-hidden="true" focusable="false" width="0" height="0">
+      <filter id="board-dark" colorInterpolationFilters="sRGB">
+        <feColorMatrix type="matrix" values={DARK_MATRIX} />
+        <feComponentTransfer>
+          <feFuncR type="gamma" exponent="0.8" />
+          <feFuncG type="gamma" exponent="0.8" />
+          <feFuncB type="gamma" exponent="0.8" />
+        </feComponentTransfer>
+      </filter>
+    </svg>
+  );
+}
+
 /** Board units between grid dots at 100%. */
 const GRID = 24;
 
@@ -123,6 +155,7 @@ export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, on
 
   return (
     <div className="canvas" ref={rootRef}>
+      <DarkFilter />
       <FrameLayer api={api} />
       <Excalidraw
         excalidrawAPI={onExcalidrawApi}

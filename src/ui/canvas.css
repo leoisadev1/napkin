@@ -37,9 +37,21 @@
   --focus-highlight-color: var(--focus-ring);
 }
 
-/* The interactive canvas is inverted in dark mode too, so this is the color that inverts to the accent. */
+/* Dark boards go through the board's own filter (BoardCanvas DarkFilter), which keeps hues true. The interactive
+   canvas is filtered too, so the selection color is the one that comes out as the accent. */
+.canvas .excalidraw.theme--dark {
+  --theme-filter: url(#board-dark);
+}
+
 :root[data-theme="dark"] .excalidraw {
-  --color-selection: #3b45b5;
+  --color-selection: #7880dc;
+}
+
+.dark-filter {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
 }
 
 /* Everything Excalidraw draws around the canvas. */
