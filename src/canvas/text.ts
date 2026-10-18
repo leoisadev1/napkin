@@ -1,7 +1,7 @@
 // Text sizing that needs no DOM: a greedy word wrap and the sticky-note size that fits a label.
 
-/** Rough Excalifont advance per character as a fraction of font size; good enough to size containers. */
-export const CHAR_WIDTH = 0.56;
+/** Rough advance per character of the board font (Inter 500) as a fraction of font size; good enough to size containers. */
+export const CHAR_WIDTH = 0.57;
 
 /** Greedy word wrap for free text, which Excalidraw does not wrap on its own. */
 export function wrap(text: string, maxChars: number): string {
@@ -32,6 +32,15 @@ const STICKY_MAX_ASPECT = 0.85;
  * A sticky note that fits `label`: wider before taller, so a long note reads as a card instead of a narrow wall.
  * Longer text gets a slightly smaller font. Short notes keep a near-square shape.
  */
+/**
+ * The note's words, pre-wrapped to the padded width. Excalidraw wraps bound text to the container's full width minus
+ * 5px, which would run words into the card's edge; breaking lines here keeps a real margin.
+ */
+export function stickyText(label: string, size: { w: number; fontSize: number }): string {
+  const chars = Math.max(8, Math.floor((size.w - STICKY_PAD * 2) / (size.fontSize * CHAR_WIDTH)));
+  return wrap(label.trim(), chars);
+}
+
 export function stickySize(label: string): { w: number; h: number; fontSize: number } {
   const len = label.trim().length;
   const fontSize = len > 140 ? 17 : len > 70 ? 18 : 20;

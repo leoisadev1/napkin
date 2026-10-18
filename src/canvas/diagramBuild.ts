@@ -12,7 +12,7 @@ import type { DiagramSpec } from "./diagramLayout";
 import type { Point } from "./geometry";
 import type { NodeMeta } from "./meta";
 import { metaData } from "./meta";
-import { HAND_FONT, INK, INK_FAINT, INK_SOFT, ROUGHNESS, STICKY_FILL, SWATCHES } from "./palette";
+import { BOARD_FONT, EDGE, EDGE_STROKE, HAIRLINE, INK, INK_FAINT, INK_SOFT, ROUGHNESS, STICKY_FILL, STICKY_STROKE, STROKE, SWATCHES } from "./palette";
 
 export type DiagramIds = {
   /** Element id for a diagram-level part: "title", "axis", a connector key. */
@@ -41,7 +41,7 @@ export function excalidrawMeasure(): Measure {
     const key = `${fontSize}|${text}`;
     const hit = cache.get(key);
     if (hit !== undefined) return hit;
-    const [el] = convertToExcalidrawElements([{ type: "text", x: 0, y: 0, text, fontSize, fontFamily: HAND_FONT }]);
+    const [el] = convertToExcalidrawElements([{ type: "text", x: 0, y: 0, text, fontSize, fontFamily: BOARD_FONT }]);
     const size = el === undefined || el.width === 0 ? estimateText(text, fontSize) : { w: Math.ceil(el.width), h: Math.ceil(el.height) };
     cache.set(key, size);
     return size;
@@ -60,7 +60,7 @@ function relative(points: readonly Point[]) {
 /** Excalidraw anchors a skeleton text's x at its alignment edge: the center for centered text, the right for right. */
 function textSkeleton(id: string, box: TextBox, color: string, align: "left" | "center" | "right"): ExcalidrawElementSkeleton {
   const x = align === "center" ? box.rect.x + box.rect.w / 2 : align === "right" ? box.rect.x + box.rect.w : box.rect.x;
-  return { id, type: "text", x, y: box.rect.y, text: box.text, fontSize: box.size, fontFamily: HAND_FONT, strokeColor: color, textAlign: align };
+  return { id, type: "text", x, y: box.rect.y, text: box.text, fontSize: box.size, fontFamily: BOARD_FONT, strokeColor: color, textAlign: align };
 }
 
 /** The text a node shows, which for timeline cards drops the date that moved onto the axis. */
@@ -99,9 +99,9 @@ export function buildDiagram(args: { diagramId: NodeId; stamp: string; spec: Dia
           type: deco.head === "arrow" ? "arrow" : "line",
           ...geo,
           strokeColor: TONE[deco.tone],
-          strokeWidth: deco.width,
+          strokeWidth: Math.min(deco.width, EDGE_STROKE),
           roughness: ROUGHNESS,
-          ...(deco.head === "arrow" ? { endArrowhead: "arrow" as const, startArrowhead: null } : {}),
+          ...(deco.head === "arrow" ? { endArrowhead: "triangle" as const, startArrowhead: null } : {}),
         });
         steps.push({ elementIds: [id], kind: "draw", after: deco.after, node: null });
         break;
@@ -157,16 +157,16 @@ export function buildDiagram(args: { diagramId: NodeId; stamp: string; spec: Dia
   for (const c of layout.connectors) {
     const id = part(`c:${c.key}`);
     const geo = relative(c.points);
-    const stroke = c.color === null ? INK_SOFT : SWATCHES[c.color].stroke;
+    const stroke = c.color === null ? EDGE : SWATCHES[c.color].stroke;
     connectorSkeletons.push({
       id,
       type: "arrow",
       ...geo,
       strokeColor: stroke,
-      strokeWidth: 2,
+      strokeWidth: EDGE_STROKE,
       roughness: ROUGHNESS,
       startArrowhead: null,
-      endArrowhead: c.head === "arrow" ? "arrow" : null,
+      endArrowhead: c.head === "arrow" ? "triangle" : null,
     });
     const ids2 = [id];
     if (c.label !== null) {
@@ -225,22 +225,24 @@ function nodeElements(node: LaidNode, rootId: string, textId: string): Excalidra
     strokeColor: swatch.stroke,
     backgroundColor: swatch.fill,
     fillStyle: "solid" as const,
-    strokeWidth: 2,
+    strokeWidth: STROKE,
     roughness: ROUGHNESS,
   };
-  const label = { text: node.text.text, fontSize: node.text.size, fontFamily: HAND_FONT, strokeColor: INK };
+  const label = { text: node.text.text, fontSize: node.text.size, fontFamily: BOARD_FONT, strokeColor: INK };
   switch (node.shape) {
     case "box":
       return [{ ...base, type: "rectangle", roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS }, label }];
     case "ellipse":
-      return [{ ...base, type: "ellipse", strokeWidth: node.role === "center" ? 3 : 2, label }];
+      return [{ ...base, type: "ellipse", strokeWidth: node.role === "center" ? 2 : STROKE, label }];
     case "diamond":
       return [{ ...base, type: "diamond", label }];
     case "sticky":
-      return [{ ...base, type: "rectangle", strokeWidth: 1, backgroundColor: STICKY_FILL[node.color], roundness: null, label }];
+      return [
+        { ...base, type: "rectangle", strokeWidth: HAIRLINE, strokeColor: STICKY_STROKE[node.color], backgroundColor: STICKY_FILL[node.color], roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 12 }, label },
+      ];
     case "cell":
       return [
-        { ...base, type: "rectangle", strokeWidth: 1, roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS } },
+        { ...base, type: "rectangle", strokeWidth: HAIRLINE, roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS } },
         textSkeleton(textId, node.text, swatch.stroke, "center"),
       ];
     case "band": {

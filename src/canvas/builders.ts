@@ -6,16 +6,22 @@ import type { ExcalidrawArrowElement, ExcalidrawElement, FileId } from "@excalid
 import type { Color, MockupComponent, ShapeKind } from "../../shared/board";
 import type { NodeMeta } from "./meta";
 import { metaData } from "./meta";
-import { CHAR_WIDTH, stickySize, wrap } from "./text";
+import { CHAR_WIDTH, stickySize, stickyText, wrap } from "./text";
 import {
   ACCENT,
   ACCENT_FILL,
-  HAND_FONT,
+  BOARD_FONT,
+  EDGE,
+  EDGE_STROKE,
+  HAIRLINE,
   INK,
   INK_FAINT,
   INK_SOFT,
   ROUGHNESS,
+  SCREEN,
   STICKY_FILL,
+  STICKY_STROKE,
+  STROKE,
   SWATCHES,
   WIRE,
   WIRE_FILL,
@@ -50,8 +56,8 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
   const swatch = SWATCHES[color];
   const rootId = id("root");
   const meta = (elId: string): NodeMeta => ({ kind: "shape", nodeId, role: elId === rootId ? "root" : "part", shape, color });
-  // A notch above Excalidraw's default so labels stay legible when a full board is fit to the screen.
-  const fontSize = 22;
+  // Set a notch large so labels stay legible when a full board is fit to the screen.
+  const fontSize = 20;
   const textWidth = label.length * fontSize * CHAR_WIDTH;
   const base = {
     id: rootId,
@@ -60,10 +66,10 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
     strokeColor: swatch.stroke,
     backgroundColor: swatch.fill,
     fillStyle: "solid" as const,
-    strokeWidth: 2,
+    strokeWidth: STROKE,
     roughness: ROUGHNESS,
   };
-  const textLabel = { text: label, fontSize, fontFamily: HAND_FONT, strokeColor: INK };
+  const textLabel = { text: label, fontSize, fontFamily: BOARD_FONT, strokeColor: INK };
 
   switch (shape) {
     case "box":
@@ -101,11 +107,11 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
               type: "rectangle",
               width: size.w,
               height: size.h,
-              strokeColor: swatch.stroke,
-              strokeWidth: 1,
+              strokeColor: STICKY_STROKE[color],
+              strokeWidth: HAIRLINE,
               backgroundColor: STICKY_FILL[color],
-              roundness: null,
-              label: { ...textLabel, fontSize: size.fontSize },
+              roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 12 },
+              label: { ...textLabel, text: stickyText(label, size), fontSize: size.fontSize },
             },
           ],
           meta,
@@ -116,7 +122,7 @@ export function buildShape(args: { nodeId: string; id: IdFactory; shape: ShapeKi
       return {
         rootId,
         elements: finish(
-          [{ id: rootId, type: "text", x: 0, y: 0, text: wrap(label, 36), fontSize: 28, fontFamily: HAND_FONT, strokeColor: INK }],
+          [{ id: rootId, type: "text", x: 0, y: 0, text: wrap(label, 36), fontSize: 28, fontFamily: BOARD_FONT, strokeColor: INK }],
           meta,
         ),
       };
@@ -156,13 +162,13 @@ export function buildPending(args: { pendingId: string; id: IdFactory; label: st
         width: 300,
         height: 300,
         strokeColor: INK_FAINT,
-        backgroundColor: "#f8f9fa",
+        backgroundColor: WIRE_FILL,
         fillStyle: "solid",
         strokeStyle: "dashed",
-        strokeWidth: 2,
+        strokeWidth: STROKE,
         roughness: ROUGHNESS,
         roundness: ADAPTIVE,
-        label: { text: args.label, fontSize: 18, fontFamily: HAND_FONT, strokeColor: INK_SOFT },
+        label: { text: args.label, fontSize: 18, fontFamily: BOARD_FONT, strokeColor: INK_SOFT },
       },
     ],
     (elId) => ({ kind: "pending", pendingId: args.pendingId, role: elId === rootId ? "root" : "part" }),
@@ -183,7 +189,7 @@ export function buildImage(args: { nodeId: string; id: IdFactory; fileId: FileId
       y: args.height + 12,
       text: wrap(args.caption, 34),
       fontSize: 16,
-      fontFamily: HAND_FONT,
+      fontFamily: BOARD_FONT,
       strokeColor: INK_SOFT,
       textAlign: "left",
     });
@@ -212,12 +218,12 @@ export function buildArrow(args: {
     y: args.y,
     width: nonZero(args.dx),
     height: nonZero(args.dy),
-    strokeColor: INK_SOFT,
-    strokeWidth: 2,
+    strokeColor: EDGE,
+    strokeWidth: EDGE_STROKE,
     roughness: ROUGHNESS,
-    endArrowhead: "arrow",
+    endArrowhead: "triangle",
     ...(args.label.trim().length > 0
-      ? { label: { text: wrap(args.label.trim(), 18), fontSize: 17, fontFamily: HAND_FONT, strokeColor: INK_SOFT } }
+      ? { label: { text: wrap(args.label.trim(), 18), fontSize: 16, fontFamily: BOARD_FONT, strokeColor: INK_SOFT } }
       : {}),
   };
   const elements = finish([skeleton], (elId) => ({
@@ -287,7 +293,7 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
   let partSeq = 0;
   const part = (): string => id(`p${partSeq++}`);
 
-  const wire = { strokeColor: WIRE, strokeWidth: 1, roughness: ROUGHNESS, fillStyle: "solid" as const };
+  const wire = { strokeColor: WIRE, strokeWidth: HAIRLINE, roughness: ROUGHNESS, fillStyle: "solid" as const };
   const text = (args: { x: number; y: number; text: string; size?: number; color?: string; align?: "left" | "center" }) =>
     cursor.skeletons.push({
       id: part(),
@@ -296,12 +302,27 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       y: args.y,
       text: args.text,
       fontSize: args.size ?? 16,
-      fontFamily: HAND_FONT,
+      fontFamily: BOARD_FONT,
       strokeColor: args.color ?? INK,
       textAlign: args.align ?? "left",
     });
+  /** Separator: a hairline rule. */
   const line = (x: number, y: number, w: number) =>
-    cursor.skeletons.push({ id: part(), type: "line", x, y, width: w, height: 0, strokeColor: INK_FAINT, strokeWidth: 2, roughness: ROUGHNESS });
+    cursor.skeletons.push({ id: part(), type: "line", x, y, width: w, height: 0, strokeColor: WIRE, strokeWidth: HAIRLINE, roughness: ROUGHNESS });
+  /** Placeholder copy: a soft rounded bar, the way skeleton screens stand in for text. */
+  const bar = (x: number, y: number, w: number) =>
+    cursor.skeletons.push({
+      ...wire,
+      id: part(),
+      type: "rectangle",
+      x,
+      y: y - 3,
+      width: w,
+      height: 7,
+      backgroundColor: WIRE_FILL,
+      strokeColor: WIRE_FILL,
+      roundness: { type: ROUNDNESS.PROPORTIONAL_RADIUS, value: 4 },
+    });
   const rect = (args: { x: number; y: number; w: number; h: number; fill?: string; stroke?: string; round?: boolean; label?: string; labelColor?: string }) =>
     cursor.skeletons.push({
       ...wire,
@@ -311,11 +332,11 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       y: args.y,
       width: args.w,
       height: args.h,
-      backgroundColor: args.fill ?? "#ffffff",
+      backgroundColor: args.fill ?? SCREEN,
       strokeColor: args.stroke ?? WIRE,
       roundness: args.round === false ? null : ADAPTIVE,
       ...(args.label !== undefined
-        ? { label: { text: args.label, fontSize: 16, fontFamily: HAND_FONT, strokeColor: args.labelColor ?? INK } }
+        ? { label: { text: args.label, fontSize: 16, fontFamily: BOARD_FONT, strokeColor: args.labelColor ?? INK } }
         : {}),
     });
   const circle = (x: number, y: number, d: number, fill: string = WIRE_FILL, stroke: string = WIRE) =>
@@ -331,7 +352,7 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       case "header": {
         rect({ x: left, y, w: width, h: 44, fill: WIRE_FILL });
         text({ x: left + 14, y: y + 11, text: label.slice(0, maxChars - 4), size: 18 });
-        circle(left + width - 36, y + 10, 24, "#ffffff");
+        circle(left + width - 36, y + 10, 24, SCREEN);
         cursor.y += 44;
         break;
       }
@@ -340,13 +361,13 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
         const lines = body.split("\n").length;
         text({ x: left, y, text: body });
         const below = y + lines * 20 + 10;
-        line(left, below, width * 0.85);
-        line(left, below + 14, width * 0.55);
+        bar(left, below, width * 0.85);
+        bar(left, below + 14, width * 0.55);
         cursor.y = below + 16;
         break;
       }
       case "button": {
-        rect({ x: left, y, w: width, h: 44, fill: ACCENT_FILL, stroke: ACCENT, label: label.slice(0, maxChars), labelColor: ACCENT });
+        rect({ x: left, y, w: width, h: 44, fill: ACCENT, stroke: ACCENT, label: label.slice(0, maxChars), labelColor: SCREEN });
         cursor.y += 44;
         break;
       }
@@ -358,9 +379,20 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       }
       case "image": {
         const h = spec.imageHeight;
-        rect({ x: left, y, w: width, h, fill: WIRE_FILL, round: false });
-        cursor.skeletons.push({ id: part(), type: "line", x: left, y, width, height: h, strokeColor: INK_FAINT, strokeWidth: 1, roughness: ROUGHNESS });
-        cursor.skeletons.push({ id: part(), type: "line", x: left, y: y + h, width, height: -h, strokeColor: INK_FAINT, strokeWidth: 1, roughness: ROUGHNESS });
+        rect({ x: left, y, w: width, h, fill: WIRE_FILL, stroke: WIRE_FILL });
+        // A landscape glyph in the middle: sun and two hills, the universal "image goes here".
+        circle(left + width / 2 + 14, y + h / 2 - 22, 14, WIRE, WIRE);
+        cursor.skeletons.push({
+          ...wire,
+          id: part(),
+          type: "line",
+          x: left + width / 2 - 40,
+          y: y + h / 2 + 22,
+          points: [localPoint(0, 0), localPoint(24, -26), localPoint(42, -8), localPoint(56, -20), localPoint(80, 0), localPoint(0, 0)],
+          backgroundColor: WIRE,
+          strokeColor: WIRE,
+          roundness: null,
+        });
         cursor.y += h;
         if (label.trim().length > 0) {
           text({ x: left, y: cursor.y + 6, text: label.slice(0, maxChars), size: 14, color: INK_SOFT });
@@ -372,8 +404,8 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
         rect({ x: left, y, w: width, h: 88 });
         rect({ x: left + 12, y: y + 12, w: 64, h: 64, fill: WIRE_FILL });
         text({ x: left + 90, y: y + 14, text: label.slice(0, maxChars - 8) });
-        line(left + 90, y + 50, (width - 110) * 0.9);
-        line(left + 90, y + 64, (width - 110) * 0.55);
+        bar(left + 90, y + 50, (width - 110) * 0.9);
+        bar(left + 90, y + 64, (width - 110) * 0.55);
         cursor.y += 88;
         break;
       }
@@ -384,7 +416,7 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
           const ry = cursor.y + index * 44;
           circle(left, ry + 8, 26);
           if (row.length > 0) text({ x: left + 38, y: ry + 10, text: row.slice(0, maxChars - 4) });
-          else line(left + 38, ry + 21, width * (index % 2 === 0 ? 0.55 : 0.4));
+          else bar(left + 38, ry + 21, width * (index % 2 === 0 ? 0.55 : 0.4));
           if (index < rows.length - 1) line(left, ry + 42, width);
         }
         cursor.y += rows.length * 44 - 2;
@@ -404,18 +436,18 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
           y: y + 6,
           width: 48,
           height: 28,
-          backgroundColor: ACCENT_FILL,
+          backgroundColor: ACCENT,
           strokeColor: ACCENT,
           roundness: { type: ROUNDNESS.PROPORTIONAL_RADIUS, value: 14 },
         });
-        circle(left + width - 26, y + 9, 22, "#ffffff", ACCENT);
+        circle(left + width - 25, y + 9, 22, SCREEN, SCREEN);
         cursor.y += 40;
         break;
       }
       case "avatar": {
         circle(left, y, 56);
         text({ x: left + 72, y: y + 8, text: label.slice(0, maxChars - 6), size: 18 });
-        line(left + 72, y + 42, width * 0.4);
+        bar(left + 72, y + 42, width * 0.4);
         cursor.y += 56;
         break;
       }
@@ -437,8 +469,8 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
             width: slot * 0.6,
             height: bh,
             backgroundColor: i === bars - 1 ? ACCENT : ACCENT_FILL,
-            strokeColor: ACCENT,
-            roundness: null,
+            strokeColor: i === bars - 1 ? ACCENT : ACCENT_FILL,
+            roundness: { type: ROUNDNESS.PROPORTIONAL_RADIUS, value: 3 },
           });
         }
         line(left + 12, y + h - 14, width - 24);
@@ -472,7 +504,7 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
         y: ty + 10,
         width: 22,
         height: 22,
-        backgroundColor: index === 0 ? ACCENT_FILL : "#ffffff",
+        backgroundColor: index === 0 ? ACCENT : SCREEN,
         strokeColor: index === 0 ? ACCENT : WIRE,
         roundness: ADAPTIVE,
       });
@@ -488,14 +520,14 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       y: 0,
       width: spec.width,
       height,
-      strokeColor: INK,
-      backgroundColor: "#ffffff",
+      strokeColor: INK_FAINT,
+      backgroundColor: SCREEN,
       fillStyle: "solid",
-      strokeWidth: 2,
+      strokeWidth: STROKE,
       roughness: ROUGHNESS,
-      roundness: device === "phone" ? { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 36 } : { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 14 },
+      roundness: device === "phone" ? { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 40 } : { type: ROUNDNESS.ADAPTIVE_RADIUS, value: 12 },
     },
-    { id: id("title"), type: "text", x: 0, y: -34, text: title, fontSize: 20, fontFamily: HAND_FONT, strokeColor: INK },
+    { id: id("title"), type: "text", x: 0, y: -32, text: title, fontSize: 18, fontFamily: BOARD_FONT, strokeColor: INK_SOFT },
   ];
   if (device === "phone") {
     chrome.push({
@@ -508,13 +540,13 @@ export function buildMockup(args: { nodeId: string; id: IdFactory; title: string
       height: 12,
       backgroundColor: INK,
       strokeColor: INK,
-      roundness: { type: ROUNDNESS.PROPORTIONAL_RADIUS, value: 6 },
+      roundness: { type: ROUNDNESS.PROPORTIONAL_RADIUS, value: 8 },
     });
   } else {
-    for (const [index, fill] of ["#ff8787", "#ffd43b", "#69db7c"].entries()) {
-      chrome.push({ ...wire, id: id(`dot${index}`), type: "ellipse", x: 16 + index * 18, y: 16, width: 11, height: 11, backgroundColor: fill, strokeColor: WIRE });
+    for (const index of [0, 1, 2]) {
+      chrome.push({ ...wire, id: id(`dot${index}`), type: "ellipse", x: 16 + index * 18, y: 15, width: 10, height: 10, backgroundColor: WIRE, strokeColor: WIRE });
     }
-    chrome.push({ id: id("chrome-line"), type: "line", x: 0, y: 40, width: spec.width, height: 0, strokeColor: WIRE, strokeWidth: 1, roughness: ROUGHNESS });
+    chrome.push({ id: id("chrome-line"), type: "line", x: 0, y: 40, width: spec.width, height: 0, strokeColor: WIRE, strokeWidth: HAIRLINE, roughness: ROUGHNESS });
   }
 
   const elements = finish(

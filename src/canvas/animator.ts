@@ -56,7 +56,7 @@ function between(a: Geometry, b: Geometry, k: number): Geometry {
   return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), width: lerp(a.width, b.width, k), height: lerp(a.height, b.height, k), points };
 }
 
-export const PARTNER_COLOR = { background: "#6965db", stroke: "#6965db" };
+export const PARTNER_COLOR = { background: "#5e6ad2", stroke: "#5e6ad2" };
 /**
  * Excalidraw ignores Collaborator.color for cursors and derives a pastel hue from a hash of the
  * collaborator id. This id hashes to hue 240, a lavender next to Excalidraw's own violet accent.

@@ -25,7 +25,7 @@ import type { NodeKind, NodeMeta } from "./meta";
 import { metaData, nodeIdOf, readMeta } from "./meta";
 import type { PacedTask } from "./pacer";
 import { createPacer } from "./pacer";
-import { SWATCHES } from "./palette";
+import { BOARD_FONT, SWATCHES } from "./palette";
 import type { SketchPart } from "./sketches";
 import { groupSketches, sketchIdOf, withSketchId } from "./sketches";
 import { reAddPlan } from "./membership";
@@ -1573,7 +1573,7 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
     }
     const rect = nodeRect(entry);
     if (rect === null) return;
-    const [text] = convertToExcalidrawElements([{ type: "text", x: 0, y: 0, text: label, fontSize: 20, fontFamily: 5, strokeColor: entry.root.strokeColor }]);
+    const [text] = convertToExcalidrawElements([{ type: "text", x: 0, y: 0, text: label, fontSize: 20, fontFamily: BOARD_FONT, strokeColor: entry.root.strokeColor }]);
     if (text === undefined) return;
     const placed = { ...text, x: rect.x + rect.w / 2 - text.width / 2, y: rect.y + rect.h + 8, frameId: entry.root.frameId, customData: withSketchId(undefined, entry.id) };
     insert(tx, [placed], null);
