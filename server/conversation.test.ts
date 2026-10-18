@@ -35,8 +35,15 @@ for (const fixture of ['mute-engine', 'pipeline-engine']) test(`${fixture} exerc
   expect(error).toBe(''); expect(exit).toBe(0);
 }, 5000);
 
-test('a pipelined question belongs only to the live request whose NEW words complete it', async () => {
+test('a spoken question has one owner across unpunctuated speech and its continuation', async () => {
   const child = Bun.spawn(['bun', 'server/fixtures/question-engine.ts'], { stdout: 'pipe', stderr: 'pipe' });
   const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   expect(error).toBe(''); expect(exit).toBe(0);
 }, 5000);
+
+test('independent live drawings land before earlier streams finish without stale overwrites or missing references', async () => {
+  const process = Bun.spawn(['bun', 'run', 'server/fixtures/early-drawing.ts'], { stdout: 'pipe', stderr: 'pipe' });
+  const exit = await process.exited;
+  const stderr = await new Response(process.stderr).text();
+  expect(stderr).toBe(''); expect(exit).toBe(0);
+});

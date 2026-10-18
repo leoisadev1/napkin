@@ -56,27 +56,29 @@ speech?.onPhrase?.('with a habit list'); speech?.onTurn('');
 expect(requests).toHaveLength(base + 1);
 await finish(base); expect(requests[base + 1]?.input.mode).toBe('live');
 await finish(base + 1);
-expect(requests[base + 2]?.input.mode).toBe('suggest');
-expect(requests[base + 2]?.input.utterance).toBe('Build a main screen with a habit list');
-send(base + 2, '{"type":"suggestions","items":["Add reminders","Add streaks"]}\n'); await finish(base + 2);
+expect(requests[base + 2]?.input.mode).toBe('refine'); await finish(base + 2);
+expect(requests[base + 3]?.input.mode).toBe('suggest');
+expect(requests[base + 3]?.input.utterance).toBe('Build a main screen with a habit list');
+send(base + 3, '{"type":"suggestions","items":["Add reminders","Add streaks"]}\n'); await finish(base + 3);
 speech?.onTurn(''); await Bun.sleep(1600);
-expect(requests).toHaveLength(base + 3);
+expect(requests).toHaveLength(base + 4);
 expect(paused.getSnapshot().suggestions).toEqual(['Add reminders', 'Add streaks']);
 // Fallback silence also requests suggestions, and partial words cancel them immediately.
-speech?.onPhrase?.('Add a check-in button'); await finish(base + 3); await Bun.sleep(1550);
-expect(requests[base + 4]?.input.mode).toBe('suggest');
+speech?.onPhrase?.('Add a check-in button'); await finish(base + 4); await Bun.sleep(1550);
+expect(requests[base + 5]?.input.mode).toBe('refine'); await finish(base + 5);
+expect(requests[base + 6]?.input.mode).toBe('suggest');
 speech?.onPartial('And');
-expect(requests[base + 4]?.signal?.aborted).toBe(true);
+expect(requests[base + 6]?.signal?.aborted).toBe(true);
 expect(paused.getSnapshot().suggestions).toEqual(['Add reminders', 'Add streaks']);
 speech?.onPhrase?.('And a weekly chart');
-expect(requests[base + 5]?.input.mode).toBe('live');
+expect(requests[base + 7]?.input.mode).toBe('live');
 speech?.onPartial('with streaks');
-expect(requests[base + 5]?.signal?.aborted).toBe(false);
+expect(requests[base + 7]?.signal?.aborted).toBe(false);
 // Canceling closes the stream so late events cannot replace chips.
-expect(() => send(base + 4, '{"type":"suggestions","items":["Stale"]}\n')).toThrow();
+expect(() => send(base + 6, '{"type":"suggestions","items":["Stale"]}\n')).toThrow();
 expect(paused.getSnapshot().suggestions).toEqual(['Add reminders', 'Add streaks']);
-await finish(base + 5); paused.stopVoice(); await Bun.sleep(1600);
-expect(requests).toHaveLength(base + 6);
+await finish(base + 7); paused.stopVoice(); await Bun.sleep(1600);
+expect(requests).toHaveLength(base + 8);
 
 // Use the real chunker: its 350ms commit must not restart the 1.5s word-silence clock.
 const { PhraseChunker } = await import('../../src/voice/phrase-chunker');
@@ -86,7 +88,8 @@ const timedBase = requests.length; const lastWord = performance.now();
 chunker.addText('show all my habits for today');
 await Bun.sleep(400); expect(requests[timedBase]?.input.mode).toBe('live'); await finish(timedBase);
 await Bun.sleep(Math.max(0, 1650 - (performance.now() - lastWord)));
-expect(requests[timedBase + 1]?.input.mode).toBe('suggest');
+expect(requests[timedBase + 1]?.input.mode).toBe('refine');
+expect(requests[timedBase + 2]?.input.mode).toBe('suggest');
 timed.interrupt(); chunker.reset();
 
 // Queue a follow-up before a mockup arrives; dispatch must include its actual components.

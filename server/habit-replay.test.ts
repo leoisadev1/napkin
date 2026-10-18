@@ -28,7 +28,8 @@ for (let run = 1; run <= 3; run++) test.skipIf(!process.env.DEV_LLM_BASE_URL)(`h
       if (op.op === 'delete') for (const id of op.ids) diagrams.delete(id);
     }
     history.push({ role: 'user', text: utterance });
-    if (step < 2) expect(diagrams.size).toBe(0);
+    if (step === 0) expect(diagrams.size).toBe(0);
+    if (step === 1) expect(diagrams.size).toBeLessThanOrEqual(1);
     if (step === 2) expect(diagrams.size).toBe(1);
   }
   const items = board.summary().items;

@@ -10,7 +10,7 @@ test('account model selection prefers GPT-6.1 Sol, then fast fallback variants',
   expect(chooseModel([])).toBeUndefined();
   expect(chooseModel(['gpt-mini', 'gpt-6.1-sol'])).toBe('gpt-6.1-sol');
 });
-test('live mode pins none on the wire despite dev defaults without parallel speech/tools', async () => {
+test('live mode normalizes unsupported efforts on the wire without parallel speech/tools', async () => {
   const previous = { ...process.env }; const efforts: string[] = [];
   const proxy = Bun.serve({ port: 0, async fetch(request) {
     const body = z.object({ reasoning_effort: z.string(), tools: z.unknown().optional() }).parse(await request.json());
@@ -24,8 +24,14 @@ test('live mode pins none on the wire despite dev defaults without parallel spee
       process.env.DEV_LLM_REASONING_EFFORT = effort;
       await runAgent({ request: new Request('http://test/api/agent'), input: { mode: 'live', utterance: 'An item', history: [], board: { title: '', items: [], selection: [], pointer: null, viewport: { x: 0, y: 0, w: 1200, h: 800 } } }, signal: AbortSignal.timeout(5000), emit: event => { expect(event.type).not.toBe('say'); } });
     }
-    expect(efforts).toEqual(['none', 'none', 'none']);
+    expect(efforts).toEqual(['low', 'low', 'low']);
   } finally {
     proxy.stop(true); for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous);
   }
+});
+
+test('live account discovery prefers a fast model while refine keeps Sol', () => {
+  expect(chooseModel(['gpt-6.1-sol', 'gpt-6-luna'], 'live')).toBe('gpt-6.1-sol');
+  expect(chooseModel(['gpt-6.1-sol', 'gpt-5.4-mini'], 'live')).toBe('gpt-5.4-mini');
+  expect(chooseModel(['gpt-6.1-sol', 'gpt-6-luna'], 'refine')).toBe('gpt-6.1-sol');
 });

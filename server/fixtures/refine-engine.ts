@@ -31,11 +31,11 @@ emit(5, title('Refined')); emit(5, { type: 'op', op: { op: 'add_shape', id: 'xp'
 await Bun.sleep(10); expect(board.summary().title).toBe('Cat Simulator');
 emit(5, { type: 'op', op: { op: 'delete', ids: ['game'] } });
 const applyStart = applied.length;
-await done(5); expect(applied.slice(applyStart)).toEqual(['delete', 'set_title', 'add_shape']); expect(engine.getSnapshot().refining).toBe(false); expect(board.summary().title).toBe('Refined'); expect(board.summary().items.some(item => item.id === 'xp')).toBe(true);
+await done(5); expect(applied.slice(applyStart)).toEqual(['set_title', 'add_shape', 'delete']); expect(engine.getSnapshot().refining).toBe(false); expect(board.summary().title).toBe('Refined'); expect(board.summary().items.some(item => item.id === 'xp')).toBe(true);
 await done(6); engine.finishSpokenStretch(); await Bun.sleep(10); expect(requests).toHaveLength(7);
-// No operations from new speech means there is nothing new to refine.
+// A no-op live stretch still gets one chance to recover its missing ideas.
 engine.receivePhrase('Tell me about the game'); engine.finishSpokenStretch(); await done(7);
-expect(requests[8]?.input.mode).toBe('suggest'); await done(8); engine.interrupt(); globalThis.fetch = original;
+expect(requests[8]?.input.mode).toBe('refine'); expect(requests[9]?.input.mode).toBe('suggest'); await done(8); await done(9); engine.interrupt(); globalThis.fetch = original;
 // Cached diagram details must not resurrect corrected labels on the next phrase.
 globalThis.fetch = Object.assign(async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => new Response(new ReadableStream<Uint8Array>({ start(stream) { requests.push({ input: AgentRequest.parse(JSON.parse(String(init?.body))), signal: init?.signal, stream }); } })), { preconnect: original.preconnect });
 const correction = new ConversationEngine({ getSummary: board.summary, apply: board.apply, showPending() {}, clearPending() {} }, { pipeline: false });

@@ -9,17 +9,29 @@ export class StretchQuestions {
     const remaining = stretch.slice(this.consumed).trimStart();
     const offset = stretch.length - remaining.length;
     const completed = [...remaining.matchAll(/[^?]+\?/g)];
-    // Interrogative speech without its closing punctuation is still an open question.
+    // STT often omits punctuation. The model judges semantic completeness; the ledger
+    // only allocates a single owner so parallel calls cannot answer twice.
     const comparisonComplete = !/\bcompare\b/i.test(remaining)
       || /\bcompare\s+.+\b(?:and|vs\.?|versus|with|to)\s+\S/i.test(remaining)
       || /\bcompare\s+(?:these|those|the|our)\s+\S+/i.test(remaining);
-    const imperative = comparisonComplete && /\b(?:brainstorm|compare|recommend|suggest|give me|show me|come up with|think of|experiment with|play with|play around with|try (?:out )?some|list (?:some|a few|out|me)|generate|name (?:it|this|the)|help me|explore)\b|\bsome (?:names|ideas|options|titles|taglines|slogans|logos|angles|concepts)\b/i.test(remaining)
+    const imperative = comparisonComplete && /\b(?:brainstorm|compare|recommend|suggest|give me|show me|throw (?:some )?ideas (?:down|out)|let['’]?s map out|come up with|think of|experiment with|play with|play around with|try (?:out )?some|list (?:some|a few|out|me)|generate|name (?:it|this|the)|help me|explore)\b|\bsome (?:names|ideas|options|titles|taglines|slogans|logos|angles|concepts)\b/i.test(remaining)
       && !/\b(?:do you|can you|could you|what|which|how|would you)\b/i.test(remaining)
       && !/\b(?:and|or|for|with|a|an|the|to)\s*$/i.test(remaining);
-    const candidates = completed.length ? completed.map(match => ({ text: match[0].trim(), end: offset + match.index + match[0].length })) : imperative ? [{ text: remaining, end: stretch.length }] : [];
+    const spokenQuestion = comparisonComplete && /\b(?:what|which|how|why|can you|could you|would you|do you)\b/i.test(remaining)
+      && remaining.split(/\s+/).length >= 6 && !/\b(?:and|or|for|with|a|an|the|to)\s*$/i.test(remaining);
+    const candidates = completed.length ? completed.map(match => ({ text: match[0].trim(), end: offset + match.index + match[0].length })) : imperative || spokenQuestion ? [{ text: remaining, end: stretch.length }] : [];
     const knownTopic = boardHasTopic || /\b(?:app|game|service|system|tracker|tracking|website|site|screen|database|editor|platform|product|podcast|show|channel|newsletter|brand|company|startup|business|book|video|course|blog|band|tool|extension|bot|store|shop|restaurant|event|community|feature|campaign|episode)s?\b/i.test(stretch)
       || /\b(?:this is|it's|it is|we're building|i'm building|building|making)\s+(?:like\s+|kind of\s+)?(?:a|an|my|our)\s+\w+/i.test(stretch)
       || candidates.some(({ text }) => /\b(?:for|about|between|compare)\s+\S+/i.test(text));
+    // A punctuated continuation of an already claimed spoken question is the same
+    // question, not another answer slot (e.g. 'that we could possibly take?').
+    const prior = this.questions.at(-1);
+    const priorClosed = /[.?!]$/.test(stretch.slice(0, this.consumed).trim());
+    const newImperative = /^(?:and |also |now )?(?:brainstorm|compare|recommend|suggest|give me|show me|generate|name|help me|explore|throw|let['’]?s|come up with|think of|experiment with|play with|try|list)\b/i.test(remaining);
+    if (prior && candidates.length && !priorClosed && !newImperative) {
+      prior.text = `${prior.text} ${remaining}`.slice(-1600); this.consumed = stretch.length;
+      return this.policy();
+    }
     const answer: Question[] = [];
     if (knownTopic) for (const { text, end } of candidates) {
       const question: Question = { id: `answer-${this.key}-${this.questions.length + 1}`, text: text.slice(-1600), status: 'answering' };
