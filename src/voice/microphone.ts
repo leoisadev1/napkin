@@ -40,7 +40,7 @@ async function openStream(deviceId: string | undefined) {
 /** How long an open mic may deliver nothing but exact zeros (a muted track does too) before it counts as dead. Real mics always carry some noise. */
 const DEAD_AFTER_MS = 4000;
 export async function captureMicrophone(args: { context: AudioContext; deviceId?: string; onFrame: (frame: Uint8Array<ArrayBuffer>) => void; onLevel: (level: number) => void; onEnded?: () => void;
-  onDevice?: (device: { id: string; group: string; label: string }) => void; onDead?: (device: { id: string; group: string; label: string }) => void }) {
+  onDevice?: (device: { id: string; group: string; label: string }) => void; onDead?: (device: { id: string; group: string; label: string; muted: boolean }) => void }) {
   const { context, onFrame, onLevel } = args;
   const stream = await openStream(args.deviceId);
   const tracks = stream.getAudioTracks();
@@ -50,11 +50,12 @@ export async function captureMicrophone(args: { context: AudioContext; deviceId?
   let capturing = false;
   let lastSound = performance.now();
   let silenced = false;
+  let reportedDead = false;
   for (const track of tracks) {
     diagnostic('mic.track', { state: track.readyState, muted: track.muted });
     track.onended = () => { diagnostic('mic.ended'); if (capturing) args.onEnded?.(); };
     track.onmute = () => diagnostic('mic.mute');
-    track.onunmute = () => diagnostic('mic.unmute');
+    track.onunmute = () => { diagnostic('mic.unmute'); lastSound = performance.now(); reportedDead = false; };
   }
   const removeEnd = debugControl('endMic', () => { for (const track of tracks) { track.stop(); track.dispatchEvent(new Event('ended')); } });
   const removeSilence = debugControl('silenceMic', () => { silenced = true; lastSound = -Infinity; });
@@ -62,13 +63,13 @@ export async function captureMicrophone(args: { context: AudioContext; deviceId?
   let node: AudioWorkletNode | undefined;
   let source: MediaStreamAudioSourceNode | undefined;
   const mute = context.createGain(); mute.gain.value = 0;
-  let reportedDead = false;
   // A Continuity iPhone mic that drops away often leaves the track "live" but silent, so watch the samples too.
   const watchdog = setInterval(() => {
     if (!capturing || reportedDead) return;
     if (context.state !== 'running' || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) { lastSound = performance.now(); return; }
     if (performance.now() - lastSound < DEAD_AFTER_MS) return;
-    reportedDead = true; diagnostic('mic.silent', { muted: tracks.every(track => track.muted) }); args.onDead?.(device);
+    const muted = tracks.every(track => track.muted);
+    reportedDead = true; diagnostic('mic.silent', { muted }); args.onDead?.({ ...device, muted });
   }, 1000);
   try {
     source = context.createMediaStreamSource(stream);

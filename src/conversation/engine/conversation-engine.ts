@@ -122,49 +122,55 @@ export class ConversationEngine {
       await stt.connect();
       this.voiceConnection = 'listening';
       if (generation !== this.voiceGeneration) { stt.stop(); return; }
-      let recoveringMic = false;
+      /** Latest capture request wins: a newer pick or recovery stops any capture still opening. */
+      let captureSeq = 0;
       /** Groups (physical devices) that went silent this session, so auto-switching never bounces back to them. */
       const deadGroups = new Set<string>();
       const restart = (deviceId: string | undefined, notice?: string) => {
-        if (generation !== this.voiceGeneration || recoveringMic) return;
-        recoveringMic = true; this.update({ phase: { kind: 'connecting' } });
+        if (generation !== this.voiceGeneration) return;
+        const seq = ++captureSeq; this.update({ phase: { kind: 'connecting' } });
         this.stopMic?.(); this.stopMic = undefined;
-        void capture(deviceId).then(stop => {
-          if (generation !== this.voiceGeneration) { stop(); return; }
+        void capture(deviceId, seq).then(stop => {
+          if (generation !== this.voiceGeneration || seq !== captureSeq) { stop(); return; }
           this.stopMic = stop;
           this.update({ phase: this.resting() });
           if (notice) this.showMicNotice(notice);
         }).catch(error => {
-          if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Microphone disconnected. Tap Retry.' } }); }
-        }).finally(() => { recoveringMic = false; });
+          if (generation === this.voiceGeneration && seq === captureSeq) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Microphone disconnected. Tap Retry.' } }); }
+        });
       };
-      const onDead = async (dead: { group: string; label: string }) => {
-        if (generation !== this.voiceGeneration) return;
+      const onDead = async (dead: { group: string; label: string; muted: boolean }, seq: number) => {
+        const name = dead.label || 'Your microphone';
+        // A muted track may be a hardware mute switch; never route around it, just say why nothing is heard.
+        if (dead.muted) { this.showMicNotice(`${name} is muted. Unmute it, or pick another mic.`); return; }
         deadGroups.add(dead.group);
         const others = (await listMicrophones().catch(() => [])).filter(device => !deadGroups.has(device.group));
-        if (generation !== this.voiceGeneration) return;
-        const name = dead.label || 'Your microphone';
+        if (generation !== this.voiceGeneration || seq !== captureSeq) return;
         const next = others[0];
         if (!next) { this.showMicNotice(`No sound from ${name}. Check it's connected, or pick another mic.`); return; }
         try { localStorage.setItem('rtw.mic', next.id); } catch {}
         restart(next.id, `${name} went silent. Switched to ${next.label}.`);
       };
-      const capture = (deviceId = this.preferredMic()) => captureMicrophone({ context, deviceId, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)),
-        onDevice: device => { this.update({ micDevice: device.id }); void this.refreshMicDevices(); },
-        onDead: device => { void onDead(device); },
-        onEnded: () => restart(undefined) });
-      this.switchMic = deviceId => restart(deviceId);
+      const current = (seq: number) => generation === this.voiceGeneration && seq === captureSeq;
+      const capture = (deviceId: string | undefined, seq: number) => captureMicrophone({ context, deviceId, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)),
+        onDevice: device => { if (current(seq)) { this.update({ micDevice: device.id }); void this.refreshMicDevices(); } },
+        onDead: device => { if (current(seq)) void onDead(device, seq); },
+        onEnded: () => { if (current(seq)) restart(undefined); } });
+      const startedWith = this.preferredMic();
       let stop: () => void;
-      try { stop = await capture(); }
+      try { stop = await capture(startedWith, ++captureSeq); }
       catch (error) {
         // Some engines accept the option but cannot attach a mic at another rate.
         if (!(error instanceof DOMException) || error.name !== 'NotSupportedError' || context.sampleRate === undefined) throw error;
         await context.close(); if (generation !== this.voiceGeneration) return;
         context = new AudioContext(); this.context = context;
-        await context.resume(); stop = await capture();
+        await context.resume(); stop = await capture(startedWith, ++captureSeq);
       }
       if (generation !== this.voiceGeneration) { stop(); return; }
       this.stopMic = stop;
+      this.switchMic = deviceId => restart(deviceId);
+      // A mic picked while voice was still starting takes over now.
+      if (this.preferredMic() !== startedWith) restart(this.preferredMic());
       const resume = () => {
         diagnostic('audio.context', { state: context.state, visibility: document.visibilityState });
         if (generation === this.voiceGeneration && context.state !== 'closed' && document.visibilityState === 'visible') {
