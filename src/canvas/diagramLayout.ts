@@ -68,7 +68,7 @@ export type DiagramLayout = {
 export const NODE_FONT = 20;
 /** Outermost mindmap ideas: a step below nodes, so the map reads hub, arms, details. */
 const LEAF_FONT = 17;
-const TITLE_FONT = 26;
+const TITLE_FONT = 30;
 const SMALL_FONT = 17;
 /** Matches Excalidraw's BOUND_TEXT_PADDING; the shapes keep extra room on top of it. */
 const BOUND_PAD = 5;

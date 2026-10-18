@@ -222,7 +222,8 @@ export function placeNear(args: { size: Size; target: Rect; direction: Direction
   return nearestFree({ size, preferred: base, obstacles });
 }
 
-const FRAME_MIN = { w: 320, h: 200 };
+// Short enough that a frame holding one row hugs it instead of trailing an empty band.
+const FRAME_MIN = { w: 320, h: 140 };
 
 /** Frame rect that wraps its children with padding: grows on any side, shrinks only right and bottom. */
 export function fitFrame(frame: Rect, children: readonly Rect[]): Rect {

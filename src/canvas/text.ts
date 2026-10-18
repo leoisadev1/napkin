@@ -27,6 +27,7 @@ const STICKY_MAX_W = 400;
 const STICKY_PAD = 22;
 const STICKY_FONT = 18;
 const STICKY_LINE = 1.25;
+const TWO_LINE_W = 300;
 
 /** A "Pick: ..." answer reads as a callout docked under its diagram: a wide strip of at most two lines. */
 export function isPick(label: string): boolean {
@@ -43,8 +44,8 @@ export function stickyText(label: string, size: { w: number; fontSize: number })
 }
 
 /**
- * A sticky note that fits `label` as a landscape card: the narrowest width (in 20px steps) that keeps it to three
- * lines, or two for a Pick. One font size for every note, so a board of notes reads as one set. Short notes keep a
+ * A sticky note that fits `label` as a landscape card: the narrowest width (in 20px steps) that keeps it to two
+ * lines, then three for longer notes; a Pick always stays within two. One font size for every note, so a board of notes reads as one set. Short notes keep a
  * card's proportions instead of collapsing to a strip.
  */
 export function stickySize(label: string): { w: number; h: number; fontSize: number } {
@@ -59,9 +60,13 @@ export function stickySize(label: string): { w: number; h: number; fontSize: num
     const lines = wrap(text, chars).split("\n").length;
     return { w, lines, h: Math.max(Math.round(w * minAspect), Math.ceil(lines * fontSize * STICKY_LINE + STICKY_PAD * 2)) };
   };
-  for (let w = STICKY_MIN_W; w < maxW; w += 20) {
-    const s = sized(w);
-    if (s.lines <= maxLines) return { w: s.w, h: s.h, fontSize };
+  // Two lines are worth some width (up to TWO_LINE_W); past that a third line beats a strip.
+  const budgets = pick ? [{ lines: maxLines, upTo: maxW }] : [{ lines: 2, upTo: TWO_LINE_W }, { lines: maxLines, upTo: maxW }];
+  for (const budget of budgets) {
+    for (let w = STICKY_MIN_W; w <= budget.upTo; w += 20) {
+      const s = sized(w);
+      if (s.lines <= budget.lines) return { w: s.w, h: s.h, fontSize };
+    }
   }
   const s = sized(maxW);
   return { w: s.w, h: s.h, fontSize };
