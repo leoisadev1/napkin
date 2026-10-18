@@ -29,12 +29,15 @@ type Props = {
 function BoardRow({
   board,
   active,
+  visible,
   onOpen,
   onRename,
   onDelete,
 }: {
   board: BoardMeta;
   active: boolean;
+  /** False while the sidebar is collapsed or the drawer closed; any open menu or rename is dropped. */
+  visible: boolean;
   onOpen: () => void;
   onRename: (title: string) => void;
   onDelete: () => void;
@@ -44,11 +47,37 @@ function BoardRow({
   const inputRef = useRef<HTMLInputElement>(null);
   const rowRef = useRef<HTMLLIElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (mode === "renaming") inputRef.current?.select();
     if (mode === "menu") firstItemRef.current?.focus();
   }, [mode]);
+
+  useEffect(() => {
+    if (!visible) setMode("idle");
+  }, [visible]);
+
+  /** Closes the menu and hands focus back to the button that opened it. */
+  const closeMenu = () => {
+    setMode("idle");
+    moreRef.current?.focus();
+  };
+
+  // Arrow keys move between the items (wrapping), Escape closes. Handled here so the drawer keeps its own Escape.
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeMenu();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+    const at = items.findIndex((item) => item === document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (at + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items[next]?.focus();
+  };
 
   // Clicking anywhere else closes the menu.
   useEffect(() => {
@@ -98,6 +127,7 @@ function BoardRow({
       )}
       {mode !== "renaming" && (
         <button
+          ref={moreRef}
           type="button"
           className="board-row-more"
           aria-label={`Actions for ${board.title}`}
@@ -109,7 +139,7 @@ function BoardRow({
         </button>
       )}
       {mode === "menu" && (
-        <div className="board-menu" role="menu" onKeyDown={(event) => event.key === "Escape" && setMode("idle")}>
+        <div className="board-menu" role="menu" aria-label={`Actions for ${board.title}`} onKeyDown={onMenuKeyDown}>
           <button ref={firstItemRef} type="button" role="menuitem" onClick={startRename}>
             <PencilIcon />
             Rename
@@ -133,10 +163,23 @@ function BoardRow({
 }
 
 export function BoardSidebar({ boards, activeId, open, drawer, mod, onToggle, onSearch, onOpen, onCreate, onRename, onDelete, undo }: Props) {
+  const navRef = useRef<HTMLElement>(null);
+
+  // The drawer is modal: focus moves in when it opens (to the open board) and returns to the trigger when it closes.
+  // The board behind it is made inert by the shell.
+  useEffect(() => {
+    if (!drawer || !open) return;
+    const previous = document.activeElement;
+    const nav = navRef.current;
+    (nav?.querySelector<HTMLElement>('[aria-current="page"]') ?? nav?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [drawer, open]);
   return (
     <>
       {drawer && <div className="boards-scrim" data-open={open} onClick={() => onToggle(false)} aria-hidden="true" />}
-      <nav className="boards-sidebar" data-open={open} data-drawer={drawer} aria-label="Boards" inert={!open}>
+      <nav ref={navRef} className="boards-sidebar" data-open={open} data-drawer={drawer} aria-label="Boards" inert={!open}>
         <div className="boards-inner">
           <header className="boards-header">
             <span className="boards-workspace">
@@ -170,6 +213,7 @@ export function BoardSidebar({ boards, activeId, open, drawer, mod, onToggle, on
                 key={board.id}
                 board={board}
                 active={board.id === activeId}
+                visible={open}
                 onOpen={() => onOpen(board.id)}
                 onRename={(title) => onRename(board.id, title)}
                 onDelete={() => onDelete(board.id)}

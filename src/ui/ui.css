@@ -206,7 +206,8 @@ kbd {
   gap: 2px;
   height: 36px;
   padding: 0 4px 0 8px;
-  max-width: min(320px, calc(50cqw - 260px));
+  /* Shrinks with the board's panel, but always keeps room to read and rename the title. */
+  max-width: clamp(140px, calc(50cqw - 260px), 320px);
   background: var(--bg-panel);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-panel);
@@ -219,6 +220,11 @@ kbd {
 
 .title-toggle {
   margin-right: 2px;
+}
+
+.title-toggle .tip-down {
+  left: -4px;
+  translate: 0 0;
 }
 
 .title-mark {

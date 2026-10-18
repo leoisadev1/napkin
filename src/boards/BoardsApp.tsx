@@ -54,7 +54,9 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
   const route = useRoute();
   const [session, setSession] = useState<BoardSession | null>(null);
   const [undo, setUndo] = useState<{ removed: RemovedBoard; timer: number } | null>(null);
-  const drawer = useMediaQuery("(max-width: 730px)");
+  // Below 960px a docked sidebar would squeeze the board's panel under the width its chrome needs (the dock would
+  // run into the zoom bar), so the sidebar becomes a drawer over a full-width board instead, as Linear does.
+  const drawer = useMediaQuery("(max-width: 959px)");
   const [pref, setPref] = useState(readSidebarPref);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -163,9 +165,10 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
   // C makes a new board, [ shows or hides the list. Ignored while typing, with modifiers, or while editing board text.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      // Escape closes the drawer and stops there, so it doesn't also interrupt the partner. A field in the drawer
-      // (renaming a board) keeps Escape for itself.
-      if (event.key === "Escape" && drawer && open && !isTyping(event.target)) {
+      // Escape closes the drawer and stops there, so it doesn't also interrupt the partner. A field or a row menu in
+      // the drawer keeps Escape for itself.
+      const inMenu = event.target instanceof Element && event.target.closest('[role="menu"]') !== null;
+      if (event.key === "Escape" && drawer && open && !inMenu && !isTyping(event.target)) {
         event.stopPropagation();
         setOpen(false);
         return;
@@ -212,7 +215,7 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
         onDelete={deleteBoard}
         undo={undo === null ? null : { title: undo.removed.meta.title, onUndo: undoDelete }}
       />
-      <main className="boards-main">{session !== null && <Screen key={session.meta.id} board={session} workspace={workspace} />}</main>
+      <main className="boards-main" inert={drawer && open}>{session !== null && <Screen key={session.meta.id} board={session} workspace={workspace} />}</main>
     </div>
   );
 }

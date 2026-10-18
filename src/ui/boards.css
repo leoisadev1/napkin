@@ -453,7 +453,7 @@
   background: var(--bg-active);
 }
 
-/* ---- Phones: a drawer over the board --------------------------------------------------------- */
+/* ---- Narrow windows and phones: a drawer over the board -------------------------------------- */
 
 .boards-sidebar[data-drawer="true"] {
   position: fixed;
@@ -523,6 +523,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .boards-sidebar,
+  .boards-sidebar[data-drawer="true"],
   .boards-main,
   .boards-inner,
   .boards-scrim {
