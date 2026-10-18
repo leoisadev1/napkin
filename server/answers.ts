@@ -29,7 +29,7 @@ export function answerGuard(input: AgentRequest) {
       if (item.origin !== 'agent' || item.kind !== 'diagram') return false;
       if (item.id === question.id) return true;
       // Reserved IDs belong to their own question, even when topics overlap.
-      if ((marker && item.id.startsWith('answer-')) || questions.length > 1) return false;
+      if (marker || questions.length > 1) return false;
       const isGeneric = generic.test([item.label, ...items.filter(child => child.frame === item.id).map(child => child.label)].join(' '));
       const answerTitle = /angle|option|idea|approach|compar|recommend|answer|alternativ|choice|framework/i.test(item.label);
       const topiclessTitle = item.label.toLowerCase().split(/\W+/).filter(Boolean).every(word => /^(?:unique|distinctive|different|new|possible|angles?|options?|ideas?|approaches|framework|brainstorm|brainstorming|a|an|the)$/.test(word));
@@ -56,12 +56,14 @@ export function answerGuard(input: AgentRequest) {
     return { question, diagramId, pickId, related, cleanup, hasDiagram: candidates.length > 0, emittedDiagram: false, emittedPick: false };
   });
   const instructions = !questionContext ? '' : states.length
-    ? states.map(state => `\nANSWER question ${JSON.stringify(state.question.text)} using diagram ID ${state.diagramId}. ENRICH or REPLACE that same ID; never add another answer. Pick sticky ID ${state.pickId}, near:${state.diagramId}:below. ${state.related ? `Answer placement near:${state.related.id}:right.` : ''} Delete superseded generic answers and extra Pick stickies. Topic must be explicit in the diagram title. No generic framework answers.`).join('')
-    : `\nDo not answer questions in this request. ${policy.existing.map(question => `The question ${JSON.stringify(question.text)} is ${question.status === 'answering' ? 'being answered by a parallel request' : 'already answered'}; don't answer it.`).join(' ') || 'The question is incomplete or its topic is unknown; wait for the completing NEW words.'} Draw no generic answer or request-restating sticky.`;
+    ? states.map(state => `\nANSWER question ${JSON.stringify(state.question.text)} using diagram ID ${state.diagramId}. ENRICH or REPLACE that same ID; never add another answer. Pick sticky ID ${state.pickId}, near:${state.diagramId}:below. ${state.related ? `Answer placement near:${state.related.id}:right.` : ''} Delete superseded generic answers and extra Pick stickies. Answer diagrams MUST use the assigned diagram ID exactly, never an arbitrary ID. Ordinary descriptive diagrams use their own IDs. Topic must be explicit in the diagram title. No generic framework answers.`).join('')
+    : `\nDo not answer questions in this request. ${policy.existing.map(question => `The question ${JSON.stringify(question.text)} is ${question.status === 'answering' ? 'being answered by a parallel request' : 'already answered'}; don't answer it.`).join(' ') || 'The question is incomplete or its topic is unknown; wait for the completing NEW words.'} Do draw concrete ideas, flows, screens and corrections from NEW words; this restriction applies only to recommendations for that same question. Draw no generic answer or request-restating sticky.`;
+  const replacementIds = new Set<string>();
   return {
     instructions,
-    cleanup(): BoardOp[] { const ids = [...new Set(states.flatMap(state => [...state.cleanup]))]; return ids.length ? [{ op: 'delete', ids }] : []; },
+    cleanup(): BoardOp[] { const ids = [...new Set(states.filter(state => state.emittedDiagram).flatMap(state => [...state.cleanup].filter(id => !replacementIds.has(id))))]; return ids.length ? [{ op: 'delete', ids }] : []; },
     operation(op: BoardOp): BoardOp | undefined {
+      if (marker && 'id' in op && op.id.startsWith('answer-') && !states.some(state => state.diagramId === op.id || state.pickId === op.id)) return;
       if (op.op === 'add_shape' && op.shape === 'sticky' && requestSticky.test(op.label)) return;
       if (op.op === 'update' && op.label !== undefined) {
         const item = items.find(item => item.id === op.id);
@@ -70,9 +72,12 @@ export function answerGuard(input: AgentRequest) {
       if (!questionContext) return op;
       if (op.op === 'add_shape' && generic.test(op.label)) return;
       if (op.op === 'add_diagram') {
-        const state = states.find(state => state.diagramId === op.id) ?? states.find(state => !state.emittedDiagram);
+        const isAnswer = op.id.startsWith('answer-') || states.some(state => state.diagramId === op.id) || !marker && /angle|option|idea|approach|compar|versus|\bvs\b|answer|alternativ|choice|framework/i.test(op.title);
+        if (!isAnswer) return op;
+        const state = states.find(state => state.diagramId === op.id) ?? (!marker ? states.find(state => !state.emittedDiagram) : undefined);
         if (!state || state.emittedDiagram || generic.test(op.nodes.map(node => node.label).join(' '))) return;
         state.emittedDiagram = true;
+        replacementIds.add(state.diagramId); op.nodes.forEach(node => replacementIds.add(node.id));
         return { ...op, id: state.diagramId, placement: state.hasDiagram ? { kind: 'at', target: state.diagramId } : state.related ? { kind: 'near', target: state.related.id, direction: 'right' } : op.placement };
       }
       if (op.op === 'add_shape' && /^Pick\s*:/i.test(op.label)) {

@@ -14,11 +14,11 @@ try {
   await Bun.sleep(620);
   expect(requests).toHaveLength(2);
   const policy = (i: number) => requests[i]?.input.history.find(turn => turn.text.startsWith('Question ownership: '))?.text ?? '';
-  expect(policy(0)).toContain('"answer":[]'); expect(policy(1)).toContain('"answer":[]');
+  expect(policy(0)).toContain('"answer":[]'); expect(policy(1)).toContain('"answer":[{');
   engine.receivePhrase('that we could possibly take?');
   await done(0); await done(1);
   expect(requests).toHaveLength(3);
-  expect(policy(2)).toContain('"answer":[{');
+  expect(policy(2)).toContain('"answer":[]');
   expect(policy(2)).toContain('habit tracking app');
   engine.receivePhrase('and keep it simple'); await Bun.sleep(620);
   expect(requests).toHaveLength(4);

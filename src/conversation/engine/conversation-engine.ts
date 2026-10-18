@@ -16,12 +16,12 @@ export class ConversationEngine {
   private outputLevels = new Set<(level: number) => void>();
   private history: ChatTurn[] = [];
   private pending = new Set<string>();
-  private flights: { abort: AbortController; text: string; mode: 'live' | 'turn'; released: boolean; done: boolean; firstOp: boolean; ops: BoardOp[]; ids: string[] }[] = [];
+  private flights: { abort: AbortController; text: string; mode: 'live' | 'turn'; released: boolean; done: boolean; firstOp: boolean; order: number; ops: BoardOp[]; ids: string[] }[] = [];
+  private requestOrder = 0;
+  private appliedOrder = new Map<string, number>();
   private stt: SpeechToText | undefined;
   private refineRequest: AbortController | undefined;
   private imageAttempted = false;
-  private liveRevision = 0;
-  private refinedRevision = 0;
   private stretchText = '';
   private stretchQuestions = new StretchQuestions();
   private refineQuestions = this.stretchQuestions;
@@ -39,7 +39,7 @@ export class ConversationEngine {
   private voiceGeneration = 0;
   private bridge: BoardBridge;
   private options;
-  constructor(bridge: BoardBridge, options: { pipeline?: boolean; memory?: ConversationMemory; onTiming?: (event: { stage: 'request' | 'first_op' | 'complete'; ids: string[]; text: string; at: number }) => void } = {}) {
+  constructor(bridge: BoardBridge, options: { pipeline?: boolean; memory?: ConversationMemory; onApplied?: (event: { ids: string[]; op: BoardOp; at: number }) => void; onTiming?: (event: { stage: 'request' | 'first_op' | 'complete'; ids: string[]; text: string; at: number }) => void } = {}) {
     this.bridge = bridge; this.options = options;
     const memory = options.memory;
     if (memory) {
@@ -126,7 +126,7 @@ export class ConversationEngine {
     this.levels.forEach(listener => listener(0)); this.update({ phase: { kind: 'idle' }, partial: '' });
   };
   interrupt = () => {
-    this.flights.forEach(flight => flight.abort.abort()); this.flights = [];
+    this.flights.forEach(flight => flight.abort.abort()); this.flights = []; this.appliedOrder.clear();
     const undispatched = this.queue[0];
     if (undispatched) this.history = undispatched.rollbackHistory;
     this.queue = [];
@@ -237,11 +237,10 @@ export class ConversationEngine {
 
   private async refine() {
     const text = this.refineStretch;
-    if (!text || this.refineRequest || this.flights.length || this.queue.length || (this.liveRevision <= this.refinedRevision && !this.refineQuestions.hasOpen())) return;
+    if (!text || this.refineRequest || this.flights.length || this.queue.length) return;
     this.refineStretch = undefined;
-    const revision = this.liveRevision;
     const abort = new AbortController(); this.refineRequest = abort; this.update({ refining: true });
-    const timer = setTimeout(() => abort.abort(), 8000);
+    const timer = setTimeout(() => abort.abort(), 12000);
     const ops: BoardOp[] = []; const pending = new Set<string>();
     let done = false;
     try {
@@ -256,8 +255,7 @@ export class ConversationEngine {
       }
       if (done && !abort.signal.aborted) {
         // Synchronous commit: no partial refine is visible while streaming or after cancellation.
-        for (const op of [...ops.filter(op => op.op === 'delete'), ...ops.filter(op => op.op !== 'delete')]) this.applyOperation(op);
-        this.refinedRevision = revision;
+        for (const op of ops) this.applyOperation(op);
       }
     } catch { /* Optional refinement preserves the live sketch on timeout/failure. */ }
     finally {
@@ -295,25 +293,60 @@ export class ConversationEngine {
       }
     }
     const abort = new AbortController();
-    const flight = { abort, text: batch.text, mode: batch.mode, released: false, done: false, firstOp: false, ops: new Array<BoardOp>(), ids: batch.ids };
+    const flight = { abort, text: batch.text, mode: batch.mode, released: false, done: false, firstOp: false, order: ++this.requestOrder, ops: new Array<BoardOp>(), ids: batch.ids };
     this.flights.push(flight);
     this.options.onTiming?.({ stage: 'request', ids: batch.ids, text: batch.text, at: performance.now() });
     const release = () => { flight.released = true; void this.drain(); };
     const pipelineTimer = setTimeout(release, 600);
     const applyReady = () => {
-      while (this.flights[0]) {
-        const head = this.flights[0];
-        for (const op of head.ops.splice(0)) {
-          if (!head.firstOp) { head.firstOp = true; this.options.onTiming?.({ stage: 'first_op', ids: head.ids, text: head.text, at: performance.now() }); }
-          this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !head.ids.includes(phrase.id)) });
+      for (const current of [...this.flights]) {
+        const priorActive = this.flights.some(other => other.order < current.order);
+        while (current.ops[0]) {
+          let op = current.ops[0];
+          const scene = this.bridge.getSummary();
+          const protectedIds = new Set(scene.items.filter(item => (this.appliedOrder.get(item.id) ?? 0) > current.order).map(item => item.id));
+          // Removing a parent must not erase a child's newer correction.
+          let protectedCount = -1;
+          while (protectedCount !== protectedIds.size) {
+            protectedCount = protectedIds.size;
+            for (const item of scene.items) if (protectedIds.has(item.id) && item.frame) protectedIds.add(item.frame);
+          }
+          if (op.op === 'clear' && protectedIds.size) {
+            const ids = scene.items.filter(item => !protectedIds.has(item.id)).map(item => item.id);
+            if (ids.length) this.applyOperation({ op: 'delete', ids });
+            this.applyOperation({ op: 'set_title', title: '' });
+            current.ops.shift(); continue;
+          }
+          if (op.op === 'delete') {
+            op = { ...op, ids: op.ids.filter(id => !protectedIds.has(id)) };
+            if (!op.ids.length) { current.ops.shift(); continue; }
+          }
+          const touched = op.op === 'add_diagram' ? [op.id, ...op.nodes.map(node => node.id), ...scene.items.filter(item => item.frame === op.id).map(item => item.id)] : 'id' in op ? [op.id] : op.op === 'delete' ? op.ids : [];
+          // A later correction wins even if an older stream arrives last.
+          if (touched.some(id => (this.appliedOrder.get(id) ?? 0) > current.order)) { current.ops.shift(); continue; }
+          if (priorActive) {
+            if (['clear', 'delete', 'move', 'set_title'].includes(op.op)) break;
+            const existing = new Set(this.bridge.getSummary().items.map(item => item.id));
+            const needs = op.op === 'add_edge' ? [op.from, op.to] : op.op === 'update' ? [op.id] : [];
+            if ('placement' in op) {
+              if (op.placement.kind === 'inside') needs.push(op.placement.frame);
+              if (op.placement.kind === 'at' || op.placement.kind === 'near') needs.push(op.placement.target);
+            }
+            if (needs.some(id => !existing.has(id))) break;
+          }
+          current.ops.shift();
+          if (!current.firstOp) { current.firstOp = true; this.options.onTiming?.({ stage: 'first_op', ids: current.ids, text: current.text, at: performance.now() }); }
+          this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !current.ids.includes(phrase.id)) });
           this.applyOperation(op);
-          if (head.mode === 'live' && ['add_shape', 'add_diagram', 'add_mockup', 'add_image', 'update'].includes(op.op)) this.liveRevision++;
+          this.options.onApplied?.({ ids: current.ids, op, at: performance.now() });
+          touched.forEach(id => this.appliedOrder.set(id, current.order));
         }
-        if (!head.done) break;
-        this.flights.shift();
-        this.options.onTiming?.({ stage: 'complete', ids: head.ids, text: head.text, at: performance.now() });
-        this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !head.ids.includes(phrase.id)) });
+        if (!current.done || current.ops.length) continue;
+        this.flights.splice(this.flights.indexOf(current), 1);
+        this.options.onTiming?.({ stage: 'complete', ids: current.ids, text: current.text, at: performance.now() });
+        this.update({ pendingPhrases: this.state.pendingPhrases.filter(phrase => !current.ids.includes(phrase.id)) });
       }
+      if (!this.flights.length) this.appliedOrder.clear();
     };
     const pending = new Set<string>(); const answeredIds: string[] = [];
     const replyId = crypto.randomUUID(); let reply = ''; let done = false;
