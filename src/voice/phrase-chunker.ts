@@ -18,7 +18,7 @@ export class PhraseChunker {
   }
   endSegment() { if (/[.?!]$/.test(this.words) || (/[,:;]$/.test(this.words) && this.words.split(/\s+/).length >= this.options.minWords)) this.commit(); }
   pause() { if (this.words.split(/\s+/).length >= this.options.minWords || /[.?!]$/.test(this.words)) this.commit(); }
-  endTurn() { this.pause(); }
+  endTurn() { this.commit(); }
   mute() { if (this.words.trim().split(/\s+/).length >= 5) this.commit(); this.reset(); }
   reset() { clearTimeout(this.timer); clearTimeout(this.deadline); this.deadline = undefined; this.words = ''; this.callbacks.onPartial(''); }
   private commit() {

@@ -28,23 +28,25 @@ try {
   await engine.startVoice(); microphone?.onFrame(new Uint8Array(3840)); expect(audioCount()).toBe(1);
   text('only four words here'); expect(engine.getSnapshot().partial).toBe('only four words here');
   engine.setMuted(true); expect(engine.getSnapshot().muted).toBe(true); expect(engine.getSnapshot().partial).toBe(''); expect(requests).toHaveLength(0);
-  microphone?.onFrame(new Uint8Array(3840)); text('late pending text must be ignored.'); expect(audioCount()).toBe(1); expect(engine.getSnapshot().partial).toBe('');
+  microphone?.onFrame(new Uint8Array(3840).fill(127));
+  expect(sent.at(-1)).toBe(JSON.stringify({ type: 'audio', audio: 'A'.repeat(5120) }));
+  text('late pending text must be ignored.'); expect(audioCount()).toBe(2); expect(engine.getSnapshot().partial).toBe('');
   // Acknowledgement of the discard flush, while muted, does not revive the partial.
   socketCallbacks?.onMessage({ type: 'flushed', flush_id: 1 });
   const at = performance.now(); engine.setMuted(false); microphone?.onFrame(new Uint8Array(3840));
-  expect(performance.now() - at).toBeLessThan(300); expect(audioCount()).toBe(2); expect(connections).toBe(1);
+  expect(performance.now() - at).toBeLessThan(300); expect(audioCount()).toBe(3); expect(connections).toBe(1);
   text('draw a payment service here'); engine.setMuted(true);
   expect(requests).toHaveLength(1); expect(requests[0]?.input.utterance).toBe('draw a payment service here');
   expect(requests[0]?.signal?.aborted).toBe(false); // Muting leaves drawing in flight.
   socketCallbacks?.onMessage({ type: 'flushed', flush_id: 2 });
-  socketCallbacks?.onClose(); await Bun.sleep(10); expect(connections).toBe(2);
-  microphone?.onFrame(new Uint8Array(3840)); text('text during a muted reconnect'); expect(audioCount()).toBe(2); expect(engine.getSnapshot().muted).toBe(true);
-  engine.setMuted(false); microphone?.onFrame(new Uint8Array(3840)); expect(audioCount()).toBe(3);
+  socketCallbacks?.onClose(); await Bun.sleep(650); expect(connections).toBe(2);
+  microphone?.onFrame(new Uint8Array(3840)); text('text during a muted reconnect'); expect(audioCount()).toBe(4); expect(engine.getSnapshot().muted).toBe(true);
+  engine.setMuted(false); microphone?.onFrame(new Uint8Array(3840)); expect(audioCount()).toBe(5);
   requests[0]?.stream.enqueue(new TextEncoder().encode('{"type":"done"}\n')); requests[0]?.stream.close(); await Bun.sleep(10);
   engine.receivePhrase('Add checkout beside the payment service'); engine.finishSpokenStretch();
   requests[1]?.stream.enqueue(new TextEncoder().encode('{"type":"done"}\n')); requests[1]?.stream.close(); await Bun.sleep(10);
   const suggestion = requests.find(request => request.input.mode === 'suggest'); expect(suggestion).toBeDefined();
   engine.setMuted(true); expect(suggestion?.signal?.aborted).toBe(true);
   engine.stopVoice(); await engine.startVoice(); expect(engine.getSnapshot().muted).toBe(true);
-  microphone?.onFrame(new Uint8Array(3840)); expect(audioCount()).toBe(3);
+  microphone?.onFrame(new Uint8Array(3840)); expect(audioCount()).toBe(6);
 } finally { engine.stopVoice(); globalThis.fetch = original; }
