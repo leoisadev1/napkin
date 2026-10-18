@@ -1,7 +1,7 @@
 // Multiple boards: the store, the URL, the sidebar, and one App per opened board. App is keyed by board id, so
 // switching boards unmounts the old canvas, bridge and conversation (aborting its agent requests) and mounts fresh
 // ones; nothing from the old board can reach the new one.
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
 import { MOD } from "../ui/BoardChrome";
 import { BoardSidebar } from "../ui/BoardSidebar";
@@ -98,6 +98,14 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
     };
   }, [ready, routeId, openId, store, onError]);
 
+  // Once the picked board has mounted, focus lands on its sidebar button, where the drawer was opened from.
+  const mountedId = session?.meta.id ?? null;
+  useEffect(() => {
+    if (mountedId === null || !focusAfterSwitch.current) return;
+    focusAfterSwitch.current = false;
+    document.querySelector<HTMLElement>(".boards-main .title-toggle")?.focus({ preventScroll: true });
+  }, [mountedId]);
+
   const setOpen = useCallback(
     (next: boolean) => {
       if (drawer) {
@@ -114,10 +122,15 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
     [drawer],
   );
 
+  /** Set when a board is picked from the drawer: the focus the drawer would restore belongs to the old board. */
+  const focusAfterSwitch = useRef(false);
   const openBoard = useCallback(
     (id: BoardId) => {
       navigateToBoard(id);
-      if (drawer) setOpen(false);
+      if (drawer) {
+        focusAfterSwitch.current = true;
+        setOpen(false);
+      }
     },
     [drawer, setOpen],
   );
