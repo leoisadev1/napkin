@@ -44,11 +44,11 @@ export function VoiceDock({ conversation }: { conversation: Conversation }) {
             maxLength={4000}
           />
           <span className="sketching" data-active={working !== null} role="status" aria-live="polite">
-            <PencilIcon size={14} strokeWidth={2} />
+            <PencilIcon size={12} strokeWidth={2} />
             <span>{working ?? ""}</span>
           </span>
           <button className="composer-send" type="submit" aria-label="Send" data-ready={draft.trim().length > 0}>
-            <SendIcon size={18} strokeWidth={2} />
+            <SendIcon strokeWidth={2} />
           </button>
         </form>
       </div>

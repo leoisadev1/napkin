@@ -1,14 +1,21 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#f9f9fa" />
     <title>Whiteboard</title>
     <!-- Excalidraw loads its fonts from here first (public/fonts), then falls back to its CDN. -->
     <script>
       window.EXCALIDRAW_ASSET_PATH = "/";
+      // Pick the theme before first paint so a dark system never flashes the light board (see src/ui/useTheme.ts).
+      (function () {
+        var pref = null;
+        try { pref = localStorage.getItem("rtw-theme"); } catch (e) {}
+        var dark = pref === "dark" || (pref !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
     </script>
   </head>
   <body>

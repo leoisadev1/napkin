@@ -1,0 +1,134 @@
+/*
+  Excalidraw is the engine, not the product: its toolbar, menus, footer, hints and welcome screen are hidden, the
+  canvas is transparent over our own surface and dot grid, and the few engine surfaces that can still appear (the
+  context menu, text editor, selection) take the shell's tokens.
+*/
+
+.canvas {
+  position: absolute;
+  inset: 0 0 0 var(--sidebar-w);
+  background-color: var(--bg-canvas);
+  background-image: radial-gradient(circle at center, var(--grid-dot) 0.9px, transparent 1.3px);
+  background-size: var(--grid-step, 24px) var(--grid-step, 24px);
+  background-position: var(--grid-x, 0) var(--grid-y, 0);
+}
+
+.canvas .excalidraw,
+.canvas .excalidraw .excalidraw-container {
+  background: transparent;
+}
+
+.excalidraw {
+  --ui-font: var(--font-ui);
+  --color-selection: #5e6ad2;
+  --color-primary: var(--accent);
+  --color-primary-darker: var(--accent-hover);
+  --color-primary-darkest: var(--accent-hover);
+  --color-primary-light: var(--accent-tint);
+  --color-primary-hover: var(--accent-hover);
+  --island-bg-color: var(--bg-panel);
+  --popup-bg-color: var(--bg-panel);
+  --popup-text-color: var(--text-1);
+  --text-primary-color: var(--text-1);
+  --border-radius-lg: var(--radius-md);
+  --border-radius-md: var(--radius-sm);
+  --shadow-island: var(--shadow-float);
+  --default-bg-color: var(--bg-canvas);
+  --focus-highlight-color: var(--focus-ring);
+}
+
+/* The interactive canvas is inverted in dark mode too, so this is the color that inverts to the accent. */
+:root[data-theme="dark"] .excalidraw {
+  --color-selection: #3b45b5;
+}
+
+/* Everything Excalidraw draws around the canvas. */
+.excalidraw .App-menu,
+.excalidraw .App-menu_top,
+.excalidraw .App-toolbar,
+.excalidraw .App-toolbar-content,
+.excalidraw .App-bottom-bar,
+.excalidraw .layer-ui__wrapper__footer,
+.excalidraw .layer-ui__wrapper__footer-left,
+.excalidraw .layer-ui__wrapper__footer-right,
+.excalidraw .layer-ui__wrapper__footer-center,
+.excalidraw .FixedSideContainer,
+.excalidraw .mobile-misc-tools-container,
+.excalidraw .scroll-back-to-content,
+.excalidraw .default-sidebar-trigger,
+.excalidraw .sidebar-trigger,
+.excalidraw .UserList,
+.excalidraw .UserList__wrapper,
+.excalidraw .HintViewer,
+.excalidraw .welcome-screen-center,
+.excalidraw .welcome-screen-decor,
+.excalidraw .main-menu-trigger,
+.excalidraw .help-icon,
+.excalidraw .zen-mode-transition,
+.excalidraw .disable-zen-mode,
+.excalidraw .Stats {
+  display: none !important;
+}
+
+/* Context menu: a Linear menu. */
+.excalidraw .context-menu {
+  min-width: 220px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-float);
+  font-family: var(--font-ui);
+  font-feature-settings: var(--font-features);
+}
+
+.excalidraw .context-menu-item {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+
+.excalidraw .context-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.excalidraw .context-menu-item:hover .context-menu-item__shortcut {
+  color: var(--text-3);
+}
+
+.excalidraw .context-menu-item__label {
+  font-weight: var(--weight-normal);
+}
+
+.excalidraw .context-menu-item__shortcut {
+  font-size: var(--text-xs);
+  color: var(--text-4);
+  opacity: 1;
+}
+
+.excalidraw .context-menu-item.dangerous:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.excalidraw .context-menu-item-separator {
+  margin: 4px 0;
+  border-color: var(--border);
+}
+
+/* The editor for board text uses the board font already; give its caret the accent. */
+.excalidraw .excalidraw-wysiwyg {
+  caret-color: var(--accent);
+}
+
+/* Frame titles are DOM labels Excalidraw positions over the canvas: give them the shell's type. */
+.excalidraw [id*="-frame-name-"] {
+  font-family: var(--font-ui) !important;
+  font-feature-settings: var(--font-features);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-sm);
+  color: var(--text-3) !important;
+}

@@ -1,4 +1,4 @@
-// The mic switch. Off reads "Talk"; on, it fills like a selected Excalidraw tool and shows a red live dot plus a
+// The mic switch. Off reads "Talk"; on, it takes the accent tint and shows a red live dot plus a
 // small level meter driven straight from the mic level through refs, so React never re-renders on sound.
 // While live, a mute button sits beside it: muted, the meter goes flat, the dot goes grey and the button reads "Muted".
 import { useEffect, useRef } from "react";
@@ -96,7 +96,7 @@ export function MicToggle({ conversation }: { conversation: Conversation }) {
     >
       <span className="mic-glyph" aria-hidden="true">
         <span className="mic-icon">
-          {state === "error" ? <AlertIcon size={18} strokeWidth={2} /> : state === "disabled" ? <MicOffIcon size={18} strokeWidth={2} /> : <MicIcon size={18} strokeWidth={2} />}
+          {state === "error" ? <AlertIcon /> : state === "disabled" ? <MicOffIcon /> : <MicIcon />}
         </span>
         <span className="mic-meter" ref={meterRef}>
           <i />
@@ -110,7 +110,7 @@ export function MicToggle({ conversation }: { conversation: Conversation }) {
   );
 }
 
-/** Keyboard shortcut for mute. Excalidraw binds no tool to M. */
+/** Keyboard shortcut for mute. The canvas engine binds no tool to M. */
 export const MUTE_KEY = "m";
 
 /** Mute stays in the voice session (instant to undo); typing, chips and drawing keep working. */
@@ -128,8 +128,8 @@ export function MuteButton({ muted, onToggle }: { muted: boolean; onToggle: () =
       onClick={onToggle}
     >
       <span className="mute-glyph" aria-hidden="true">
-        <MicIcon className="mute-on" size={18} strokeWidth={2} />
-        <MicOffIcon className="mute-off" size={18} strokeWidth={2} />
+        <MicIcon className="mute-on" />
+        <MicOffIcon className="mute-off" />
       </span>
       <span className="mute-label">
         <span>Muted</span>

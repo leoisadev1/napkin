@@ -1,0 +1,119 @@
+/*
+  Design tokens. Derived from Linear's own CSS (linear.app, read Oct 2026): neutral grays with a cool cast, one indigo
+  accent, Inter at 13px with cv01 + ss03, hairline borders, 6-8px radii and quiet layered shadows. Every surface of the
+  shell (and the boards sidebar) reads from these, so a theme switch is a token swap.
+*/
+
+@import "@fontsource-variable/inter";
+
+:root {
+  --font-ui: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-features: "cv01", "ss03";
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-micro: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --weight-normal: 400;
+  --weight-medium: 510;
+  --weight-semibold: 590;
+  --tracking-sm: -0.01em;
+  --tracking-md: -0.013em;
+  --tracking-display: -0.022em;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --control-sm: 24px;
+  --control: 28px;
+  --control-lg: 32px;
+  --space-edge: 12px;
+
+  /* Linear's curves and speeds. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-icon: cubic-bezier(0.2, 0, 0, 1);
+  --speed-quick: 100ms;
+  --speed: 160ms;
+  --speed-slow: 240ms;
+
+  /* Left gutter the boards sidebar claims; chrome on the left edge starts after it. */
+  --sidebar-w: 0px;
+
+  /* ---- Light ---- */
+  --bg-canvas: #f9f9fa;
+  --grid-dot: #d9d9de;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #fbfbfb;
+  --bg-hover: #f2f2f4;
+  --bg-active: #ebebee;
+  --bg-input: #f7f7f8;
+  --border: #e6e5e8;
+  --border-strong: #d8d7db;
+  --border-translucent: rgb(0 0 0 / 0.06);
+  --text-1: #282a30;
+  --text-2: #3c4149;
+  --text-3: #6f6e77;
+  --text-4: #9a99a1;
+  --accent: #5e6ad2;
+  --accent-hover: #4f5bc4;
+  --accent-text: #4d58c2;
+  --accent-tint: #eef0fc;
+  --accent-tint-strong: #e2e5fa;
+  --on-accent: #ffffff;
+  --live: #eb5757;
+  --danger: #d23f3f;
+  --focus-ring: rgb(94 106 210 / 0.55);
+
+  --shadow-tiny: 0 1px 1px 0 rgb(0 0 0 / 0.06);
+  --shadow-panel: 0 0 0 1px var(--border), 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 6px -2px rgb(0 0 0 / 0.06);
+  --shadow-float: 0 0 0 1px var(--border), 0 3px 12px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.04);
+  --shadow-modal: 0 0 0 1px var(--border), 0 16px 48px rgb(0 0 0 / 0.14), 0 4px 12px rgb(0 0 0 / 0.06);
+  --scrim: rgb(20 21 26 / 0.18);
+
+  color-scheme: light;
+  font-family: var(--font-ui);
+  font-feature-settings: var(--font-features);
+  color: var(--text-1);
+}
+
+:root[data-theme="dark"] {
+  --bg-canvas: #0b0c0d;
+  --grid-dot: #26272b;
+  --bg-panel: #141516;
+  --bg-panel-2: #18191a;
+  --bg-hover: #1f2023;
+  --bg-active: #26272b;
+  --bg-input: #101112;
+  --border: #25262a;
+  --border-strong: #34343a;
+  --border-translucent: rgb(255 255 255 / 0.06);
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #6c74e8;
+  --accent-hover: #7f87f2;
+  --accent-text: #9aa1ff;
+  --accent-tint: #1b1c33;
+  --accent-tint-strong: #23254a;
+  --on-accent: #ffffff;
+  --live: #f06a6a;
+  --danger: #ff8a85;
+  --focus-ring: rgb(129 137 255 / 0.6);
+
+  --shadow-tiny: 0 1px 1px 0 rgb(0 0 0 / 0.3);
+  --shadow-panel: 0 0 0 1px var(--border), inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 2px 8px rgb(0 0 0 / 0.35);
+  --shadow-float: 0 0 0 1px var(--border-strong), inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 4px 24px rgb(0 0 0 / 0.45);
+  --shadow-modal: 0 0 0 1px var(--border-strong), inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 16px 64px rgb(0 0 0 / 0.6);
+  --scrim: rgb(0 0 0 / 0.45);
+
+  color-scheme: dark;
+}

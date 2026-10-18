@@ -28,7 +28,7 @@ export function TitleIsland({ title, onRename }: { title: string; onRename: (tit
   return (
     <div className="title-island">
       <span className="title-mark">
-        <Mark />
+        <Mark size={18} />
       </span>
       {editing ? (
         <input

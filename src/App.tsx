@@ -2,16 +2,21 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { CanvasState } from "./canvas/BoardCanvas";
-import { BoardCanvas } from "./canvas/BoardCanvas";
+import { BoardCanvas, INITIAL_CANVAS } from "./canvas/BoardCanvas";
 import { createBridgeHost } from "./canvas/host";
 import { useConversation } from "./conversation/select";
+import { BoardChrome, MOD } from "./ui/BoardChrome";
+import type { Command } from "./ui/CommandMenu";
 import { EmptyState } from "./ui/EmptyState";
 import { micState, MUTE_KEY } from "./ui/MicToggle";
-import { TranscriptIcon } from "./ui/icons";
+import { CommandIcon, MicIcon, MicOffIcon, MoonIcon, SunIcon, TranscriptIcon } from "./ui/icons";
 import { SignIn } from "./ui/SignIn";
 import { TitleIsland } from "./ui/TitleIsland";
 import { TranscriptPanel } from "./ui/TranscriptPanel";
+import { useTheme } from "./ui/useTheme";
 import { VoiceDock } from "./ui/VoiceDock";
+import "./ui/tokens.css";
+import "./ui/canvas.css";
 import "./ui/ui.css";
 
 declare global {
@@ -34,7 +39,9 @@ function reportCanvasError(error: unknown) {
 export default function App() {
   const host = useMemo(() => createBridgeHost({ onError: reportCanvasError }), []);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
-  const [canvas, setCanvas] = useState<CanvasState>({ hasContent: false, theme: "light" });
+  const [canvas, setCanvas] = useState<CanvasState>(INITIAL_CANVAS);
+  const { theme, setPreference: setThemePreference, toggle: toggleTheme } = useTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [title, setTitle] = useState(host.bridge.getTitle());
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const conversation = useConversation(host.bridge);
@@ -55,10 +62,6 @@ export default function App() {
   useEffect(() => {
     document.title = `${title} · Whiteboard`;
   }, [title]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = canvas.theme;
-  }, [canvas.theme]);
 
   // Esc cancels a turn the partner is still working on.
   const { phase, interrupt } = conversation;
@@ -95,26 +98,70 @@ export default function App() {
     host.bridge.setPartner(refining ? { kind: "tidying" } : thinkingKey !== null ? { kind: "thinking", key: thinkingKey } : { kind: "idle" });
   }, [host, refining, thinkingKey]);
 
+  // Conversation actions also live in the ⌘K menu.
+  const { startVoice, stopVoice } = conversation;
+  const voiceAvailable = conversation.voiceAvailable;
+  const menuExtra = useMemo((): Command[] => {
+    const talk: Command[] = !voiceAvailable
+      ? []
+      : live
+        ? [{ id: "stop-talking", group: "Conversation", label: "Stop listening", Icon: MicOffIcon, run: stopVoice }]
+        : [{ id: "start-talking", group: "Conversation", label: "Start talking", Icon: MicIcon, keywords: "voice mic", run: () => void startVoice() }];
+    const mute: Command[] = live ? [{ id: "mute", group: "Conversation", label: muted ? "Unmute" : "Mute", Icon: muted ? MicIcon : MicOffIcon, shortcut: "M", run: () => setMuted(!muted) }] : [];
+    return [
+      ...talk,
+      ...mute,
+      { id: "transcript", group: "Conversation", label: transcriptOpen ? "Hide conversation" : "Show conversation", Icon: TranscriptIcon, keywords: "transcript history", run: () => setTranscriptOpen((open) => !open) },
+    ];
+  }, [voiceAvailable, live, muted, setMuted, startVoice, stopVoice, transcriptOpen]);
+
   const resting = phase.kind === "idle" || phase.kind === "error";
   const showEmpty = resting && !canvas.hasContent && conversation.transcript.length === 0 && conversation.partial.length === 0;
 
   return (
     <div className="app">
-      <BoardCanvas onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} />
+      <BoardCanvas theme={theme} onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} />
       <TitleIsland title={title} onRename={(next) => host.bridge.setTitle(next)} />
       <div className="top-right">
         <SignIn />
-        <button
-          type="button"
-          className="icon-btn island"
-          aria-label={transcriptOpen ? "Hide conversation" : "Show conversation"}
-          aria-expanded={transcriptOpen}
-          data-active={transcriptOpen}
-          onClick={() => setTranscriptOpen((open) => !open)}
-        >
-          <TranscriptIcon size={18} />
-        </button>
+        <div className="panel top-tools">
+          <button type="button" className="ghost-btn" aria-label="Command menu" aria-keyshortcuts="Control+K Meta+K" onClick={() => setMenuOpen(true)}>
+            <CommandIcon />
+            <span className="tip tip-down" role="presentation">
+              Commands<kbd>{MOD}K</kbd>
+            </span>
+          </button>
+          <button type="button" className="ghost-btn" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onClick={toggleTheme}>
+            {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+            <span className="tip tip-down" role="presentation">
+              {theme === "dark" ? "Light theme" : "Dark theme"}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            aria-label={transcriptOpen ? "Hide conversation" : "Show conversation"}
+            aria-expanded={transcriptOpen}
+            aria-pressed={transcriptOpen}
+            onClick={() => setTranscriptOpen((open) => !open)}
+          >
+            <TranscriptIcon />
+            <span className="tip tip-down" role="presentation">
+              Conversation
+            </span>
+          </button>
+        </div>
       </div>
+      <BoardChrome
+        api={api}
+        canvas={canvas}
+        theme={theme}
+        title={title}
+        setThemePreference={setThemePreference}
+        menuOpen={menuOpen}
+        setMenuOpen={setMenuOpen}
+        extra={menuExtra}
+      />
       <EmptyState
         visible={showEmpty}
         voiceAvailable={conversation.voiceAvailable}

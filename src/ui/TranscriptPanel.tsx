@@ -16,8 +16,8 @@ export function TranscriptPanel({ open, entries, onClose }: { open: boolean; ent
     <aside className="transcript" data-open={open} aria-label="Conversation" aria-hidden={!open} inert={!open}>
       <header className="transcript-head">
         <h2>Conversation</h2>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close conversation">
-          <CloseIcon size={18} />
+        <button type="button" className="ghost-btn" onClick={onClose} aria-label="Close conversation">
+          <CloseIcon />
         </button>
       </header>
       {entries.length === 0 ? (

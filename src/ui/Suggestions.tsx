@@ -2,7 +2,7 @@
 // hides the current set until the partner offers new ones. The last set stays mounted while it fades out.
 import { useState } from "react";
 import type { KeyboardEvent } from "react";
-import { CloseIcon } from "./icons";
+import { CloseIcon, SparkleIcon } from "./icons";
 
 type Props = { suggestions: readonly string[]; onPick: (text: string) => void };
 
@@ -23,14 +23,15 @@ export function Suggestions({ suggestions, onPick }: Props) {
         // Keyed by the set so a new set enters fresh instead of morphing the old chips.
         <li key={`${key}-${text}`} style={{ transitionDelay: visible ? `${index * 50}ms` : undefined }}>
           <button type="button" className="chip" title={text} onClick={() => onPick(text)}>
-            {text}
+            <SparkleIcon size={14} />
+            <span>{text}</span>
           </button>
         </li>
       ))}
       {shown.length > 0 && (
         <li key={`${key}-dismiss`} style={{ transitionDelay: visible ? `${shown.length * 50}ms` : undefined }}>
           <button type="button" className="chips-dismiss" aria-label="Dismiss suggestions" onClick={() => setDismissed(key)}>
-            <CloseIcon size={16} strokeWidth={2} />
+            <CloseIcon size={14} />
           </button>
         </li>
       )}

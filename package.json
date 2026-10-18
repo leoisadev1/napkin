@@ -17,11 +17,13 @@
     "@ai-sdk/openai": "^4.0.96",
     "@excalidraw/excalidraw": "^0.18.1",
     "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
     "@opencoredev/loginwithchatgpt-ai": "^0.2.0",
     "@opencoredev/loginwithchatgpt-core": "^0.2.0",
     "@opencoredev/loginwithchatgpt-react": "^0.2.0",
     "@opencoredev/loginwithchatgpt-server": "^0.2.0",
     "ai": "^7.0.143",
+    "lucide-react": "^1.59.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zod": "^4.6.7"
