@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ComponentType, KeyboardEvent } from "react";
 import { EnterIcon, SearchIcon } from "./icons";
+import { Keys } from "./Keys";
 
 export type Command = {
   id: string;
@@ -150,7 +151,7 @@ export function CommandMenu({ open, commands, onClose }: Props) {
                         <EnterIcon size={12} />
                       </kbd>
                     ) : (
-                      command.shortcut !== undefined && <kbd>{command.shortcut}</kbd>
+                      command.shortcut !== undefined && <Keys combo={command.shortcut} />
                     )}
                   </div>
                 );

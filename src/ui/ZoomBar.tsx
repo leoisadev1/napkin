@@ -1,5 +1,6 @@
 // Bottom-left: zoom out, the current zoom (click to fit the board), zoom in, then undo and redo.
 import { MinusIcon, PlusIcon, RedoIcon, UndoIcon } from "./icons";
+import { Keys } from "./Keys";
 
 type Props = {
   zoom: number;
@@ -17,32 +18,32 @@ export function ZoomBar({ zoom, mod, onZoomIn, onZoomOut, onFit, onUndo, onRedo 
       <button type="button" className="ghost-btn" aria-label="Zoom out" onClick={onZoomOut}>
         <MinusIcon />
         <span className="tip tip-up" role="presentation">
-          Zoom out<kbd>{mod}−</kbd>
+          Zoom out<Keys combo={`${mod} −`} />
         </span>
       </button>
       <button type="button" className="ghost-btn zoom-value" aria-label={`Zoom ${zoom}%. Fit board to screen`} onClick={onFit}>
         {zoom}%
         <span className="tip tip-up" role="presentation">
-          Zoom to fit<kbd>⇧1</kbd>
+          Zoom to fit<Keys combo="⇧ 1" />
         </span>
       </button>
       <button type="button" className="ghost-btn" aria-label="Zoom in" onClick={onZoomIn}>
         <PlusIcon />
         <span className="tip tip-up" role="presentation">
-          Zoom in<kbd>{mod}+</kbd>
+          Zoom in<Keys combo={`${mod} +`} />
         </span>
       </button>
       <span className="panel-divider" aria-hidden="true" />
       <button type="button" className="ghost-btn" aria-label="Undo" onClick={onUndo}>
         <UndoIcon />
         <span className="tip tip-up" role="presentation">
-          Undo<kbd>{mod}Z</kbd>
+          Undo<Keys combo={`${mod} Z`} />
         </span>
       </button>
       <button type="button" className="ghost-btn" aria-label="Redo" onClick={onRedo}>
         <RedoIcon />
         <span className="tip tip-up" role="presentation">
-          Redo<kbd>{mod}⇧Z</kbd>
+          Redo<Keys combo={`${mod} ⇧ Z`} />
         </span>
       </button>
     </div>

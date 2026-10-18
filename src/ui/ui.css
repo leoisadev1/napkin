@@ -142,6 +142,11 @@ kbd {
   z-index: 10;
 }
 
+.keys {
+  display: inline-flex;
+  gap: 3px;
+}
+
 .tip:not(:has(kbd)) {
   padding-right: 9px;
 }
@@ -1222,8 +1227,12 @@ kbd {
   padding-left: 24px;
 }
 
-.turn[data-continues="false"]:not(:first-child) {
-  padding-top: 12px;
+.turn + .turn {
+  padding-top: 14px;
+}
+
+.turn-text [data-final="false"] {
+  color: var(--text-3);
 }
 
 .turn-who {
@@ -1499,6 +1508,7 @@ kbd {
 }
 
 .cmdk-search {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;

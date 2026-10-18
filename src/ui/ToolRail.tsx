@@ -17,6 +17,7 @@ import {
   TextToolIcon,
   UndoIcon,
 } from "./icons";
+import { Keys } from "./Keys";
 
 export type ToolSpec = { tool: BoardTool; label: string; key: string; Icon: ComponentType<{ size?: number }> };
 
@@ -78,13 +79,13 @@ export function ToolRail({ active, onPick, onUndo, onRedo, mod }: Props) {
         <button type="button" className="rail-btn" aria-label="Undo" onClick={onUndo}>
           <UndoIcon />
           <span className="tip" role="presentation">
-            Undo<kbd>{mod}Z</kbd>
+            Undo<Keys combo={`${mod} Z`} />
           </span>
         </button>
         <button type="button" className="rail-btn" aria-label="Redo" onClick={onRedo}>
           <RedoIcon />
           <span className="tip" role="presentation">
-            Redo<kbd>{mod}⇧Z</kbd>
+            Redo<Keys combo={`${mod} ⇧ Z`} />
           </span>
         </button>
       </div>

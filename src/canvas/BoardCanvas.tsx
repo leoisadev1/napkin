@@ -5,8 +5,9 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { OrderedExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { PointerSample } from "./bridge";
+import { FrameLayer } from "./FrameLayer";
 import { BOARD_FONT, EDGE_STROKE, INK, ROUGHNESS } from "./palette";
 
 export type Theme = "light" | "dark";
@@ -41,6 +42,14 @@ function same(a: CanvasState, b: CanvasState): boolean {
 export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, onPointer }: Props) {
   const last = useRef<CanvasState>(INITIAL_CANVAS);
   const rootRef = useRef<HTMLDivElement>(null);
+  const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const onExcalidrawApi = useCallback(
+    (next: ExcalidrawImperativeAPI) => {
+      setApi(next);
+      onApi(next);
+    },
+    [onApi],
+  );
 
   // Native capture listeners: they see every move before Excalidraw handles it, and know whether it is a finger.
   useEffect(() => {
@@ -93,14 +102,19 @@ export const BoardCanvas = memo(function BoardCanvas({ theme, onApi, onState, on
 
   return (
     <div className="canvas" ref={rootRef}>
+      <FrameLayer api={api} />
       <Excalidraw
-        excalidrawAPI={onApi}
+        excalidrawAPI={onExcalidrawApi}
         onChange={onChange}
         onScrollChange={onScrollChange}
         theme={theme}
+        // Tool keys work wherever focus is (except text fields), not only after a click on the canvas.
+        handleKeyboardGlobally
         initialData={{
           appState: {
             viewBackgroundColor: "transparent",
+            // Frames are drawn by FrameLayer; Excalidraw keeps their names, clipping and behavior.
+            frameRendering: { enabled: true, name: true, outline: false, clip: true },
             currentItemFontFamily: BOARD_FONT,
             currentItemFontSize: 20,
             currentItemRoughness: ROUGHNESS,

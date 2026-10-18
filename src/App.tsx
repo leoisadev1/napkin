@@ -9,6 +9,8 @@ import { BoardChrome, MOD } from "./ui/BoardChrome";
 import type { Command } from "./ui/CommandMenu";
 import { EmptyState } from "./ui/EmptyState";
 import { micState, MUTE_KEY } from "./ui/MicToggle";
+import { Keys } from "./ui/Keys";
+import { PartnerCursor } from "./ui/PartnerCursor";
 import { CommandIcon, MicIcon, MicOffIcon, MoonIcon, SunIcon, TranscriptIcon } from "./ui/icons";
 import { SignIn } from "./ui/SignIn";
 import { TitleIsland } from "./ui/TitleIsland";
@@ -121,6 +123,7 @@ export default function App() {
   return (
     <div className="app">
       <BoardCanvas theme={theme} onApi={setApi} onState={setCanvas} onPointer={host.bridge.trackPointer} />
+      <PartnerCursor store={host.cursor} api={api} />
       <TitleIsland title={title} onRename={(next) => host.bridge.setTitle(next)} />
       <div className="top-right">
         <SignIn />
@@ -128,7 +131,7 @@ export default function App() {
           <button type="button" className="ghost-btn" aria-label="Command menu" aria-keyshortcuts="Control+K Meta+K" onClick={() => setMenuOpen(true)}>
             <CommandIcon />
             <span className="tip tip-down" role="presentation">
-              Commands<kbd>{MOD}K</kbd>
+              Commands<Keys combo={`${MOD} K`} />
             </span>
           </button>
           <button type="button" className="ghost-btn" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onClick={toggleTheme}>

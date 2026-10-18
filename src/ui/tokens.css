@@ -50,6 +50,7 @@
   /* ---- Light ---- */
   --bg-canvas: #f9f9fa;
   --grid-dot: #d9d9de;
+  --bg-frame: rgb(255 255 255 / 0.82);
   --bg-panel: #ffffff;
   --bg-panel-2: #fbfbfb;
   --bg-hover: #f2f2f4;
@@ -76,7 +77,7 @@
   --shadow-panel: 0 0 0 1px var(--border), 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 6px -2px rgb(0 0 0 / 0.06);
   --shadow-float: 0 0 0 1px var(--border), 0 3px 12px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.04);
   --shadow-modal: 0 0 0 1px var(--border), 0 16px 48px rgb(0 0 0 / 0.14), 0 4px 12px rgb(0 0 0 / 0.06);
-  --scrim: rgb(20 21 26 / 0.18);
+  --scrim: rgb(20 21 26 / 0.08);
 
   color-scheme: light;
   font-family: var(--font-ui);
@@ -87,6 +88,7 @@
 :root[data-theme="dark"] {
   --bg-canvas: #0b0c0d;
   --grid-dot: #26272b;
+  --bg-frame: rgb(20 21 23 / 0.86);
   --bg-panel: #141516;
   --bg-panel-2: #18191a;
   --bg-hover: #1f2023;

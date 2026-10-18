@@ -8,6 +8,7 @@ import type { LocalPoint } from "./builders";
 import { localPoint } from "./builders";
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from "@excalidraw/excalidraw/types";
 import type { Point } from "./geometry";
+import type { CursorStore, PartnerCursor } from "./cursorStore";
 import { metaData, readMeta } from "./meta";
 
 const FADE_MS = 280;
@@ -82,7 +83,7 @@ const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t 
 
 export type Animator = ReturnType<typeof createAnimator>;
 
-export function createAnimator(api: ExcalidrawImperativeAPI) {
+export function createAnimator(api: ExcalidrawImperativeAPI, options: { cursor?: CursorStore } = {}) {
   const fades = new Map<string, Fade>();
   const pulses = new Set<string>();
   const glides = new Map<string, Glide>();
@@ -90,7 +91,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
   let ghostSeq = 0;
   let cursor: CursorState | null = null;
   /** Shown beside the partner's name ("…", "Tidying up…"). While set, the cursor stays instead of fading away. */
-  let status: string | null = null;
+  let status: PartnerCursor["status"] = null;
   let frame: number | null = null;
   const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -276,6 +277,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     if (cursor === null || !isSocketId(PARTNER_SOCKET)) return;
     if (status === null && now - cursor.lastMove > CURSOR_LINGER_MS) {
       cursor = null;
+      options.cursor?.set(null);
       api.updateScene({ collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER });
       return;
     }
@@ -283,11 +285,12 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     const k = easeInOut(t);
     const x = cursor.from.x + (cursor.to.x - cursor.from.x) * k;
     const y = cursor.from.y + (cursor.to.y - cursor.from.y) * k;
+    // The shell draws the cursor itself (ui/PartnerCursor); Excalidraw only outlines what the partner just drew.
+    options.cursor?.set({ x, y, status });
     const partner: Collaborator = {
       id: PARTNER_ID,
-      username: status === null ? "Partner" : `Partner ${status}`,
+      username: "Partner",
       color: PARTNER_COLOR,
-      pointer: { x, y, tool: "pointer" },
       // The outline shows once the cursor lands and clears after a beat, so it marks what is new without lingering.
       selectedElementIds: t >= 1 && now - cursor.start - CURSOR_MS < HIGHLIGHT_MS ? cursor.selected : {},
     };
@@ -350,7 +353,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
   }
 
   /** Sets or clears the label beside the cursor. Clearing lets an idle cursor fade after the usual linger. */
-  function setStatus(next: string | null) {
+  function setStatus(next: PartnerCursor["status"]) {
     if (next === status) return;
     status = next;
     if (cursor !== null) cursor = { ...cursor, lastMove: performance.now() };
@@ -372,6 +375,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI) {
     exits.clear();
     cursor = null;
     status = null;
+    options.cursor?.set(null);
   }
 
   return { anticipate, setStatus, fadeIn, pulse, stopPulse, pointAt, glideFrom, enter, fadeOutCopies, dropGhosts, finishMotion, finalGeometry, dispose };

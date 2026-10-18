@@ -8,6 +8,7 @@ import { NodeId } from "../../shared/board";
 import type { BoardBridge } from "../conversation/types";
 import type { Animator } from "./animator";
 import { createAnimator } from "./animator";
+import type { CursorStore } from "./cursorStore";
 import type { Built, IdFactory } from "./builders";
 import { arrowGeometry, buildArrow, buildFrame, DORMANT_FRAME_NAME, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
 import type { DiagramIds, EntryStep } from "./diagramBuild";
@@ -36,11 +37,11 @@ type Insets = { top: number; bottom: number; left: number; right: number };
 
 /**
  * Screen-space insets covered by the app's floating chrome, so "in view" means actually visible. The bottom covers
- * the dock: the bar, the live line and a row of suggestion chips. Phones (the 730px breakpoint in ui.css) stack Excalidraw's toolbar and the title
- * row on top and keep a lock column on the right.
+ * the dock: the bar, the live line and a row of suggestion chips; the left covers the tool rail. Phones (the 730px
+ * breakpoint in ui.css) stack the title row and the tool strip on top instead.
  */
 export function chromeInsets(viewportWidth: number): Insets {
-  return viewportWidth <= 730 ? { top: 116, bottom: 210, left: 16, right: 52 } : { top: 80, bottom: 160, left: 32, right: 32 };
+  return viewportWidth <= 730 ? { top: 108, bottom: 210, left: 16, right: 16 } : { top: 64, bottom: 160, left: 72, right: 32 };
 }
 
 const ROW_GAP = 96;
@@ -262,8 +263,8 @@ function labelOf(entry: NodeEntry, byId: ReadonlyMap<string, ExcalidrawElement>)
   return textOf(text);
 }
 
-export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onError?: (error: unknown) => void } = {}): CanvasBridge {
-  const animator: Animator = createAnimator(api);
+export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onError?: (error: unknown) => void; cursor?: CursorStore } = {}): CanvasBridge {
+  const animator: Animator = createAnimator(api, { cursor: options.cursor });
   const titleListeners = new Set<(title: string) => void>();
   let title = DEFAULT_TITLE;
   let seq = 0;
@@ -2157,12 +2158,12 @@ export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onErr
         animator.setStatus(null);
         return;
       case "thinking":
-        animator.setStatus("…");
+        animator.setStatus("thinking");
         // A new phrase: glide toward where it will land right away, so silence never reads as being ignored.
         if (prev.kind !== "thinking" || prev.key !== next.key) animator.anticipate(likelySpot());
         return;
       case "tidying":
-        animator.setStatus("· tidying up…");
+        animator.setStatus("tidying");
         if (prev.kind !== "tidying") animator.anticipate(likelySpot());
         return;
       default: {

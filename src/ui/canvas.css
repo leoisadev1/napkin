@@ -70,9 +70,17 @@
   display: none !important;
 }
 
+/* Engine modes the shell does not offer (its own grid, zen, view-only, stats) come out of the context menu. */
+.excalidraw .context-menu [data-testid="gridMode"],
+.excalidraw .context-menu [data-testid="zenMode"],
+.excalidraw .context-menu [data-testid="viewMode"],
+.excalidraw .context-menu [data-testid="stats"] {
+  display: none;
+}
+
 /* Context menu: a Linear menu. */
 .excalidraw .context-menu {
-  min-width: 220px;
+  min-width: 260px;
   padding: 4px;
   border: 0;
   border-radius: var(--radius-md);
@@ -83,6 +91,10 @@
 }
 
 .excalidraw .context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   height: 30px;
   padding: 0 8px;
   border-radius: var(--radius-sm);
@@ -127,8 +139,120 @@
 /* Frame titles are DOM labels Excalidraw positions over the canvas: give them the shell's type. */
 .excalidraw [id*="-frame-name-"] {
   font-family: var(--font-ui) !important;
+  font-size: var(--text-sm) !important;
   font-feature-settings: var(--font-features);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-sm);
   color: var(--text-3) !important;
+}
+
+/* ---- Partner cursor (drawn by ui/PartnerCursor) ---------------------------------------------- */
+
+.cursor-layer {
+  position: absolute;
+  inset: 0 0 0 var(--sidebar-w);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.partner-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+  transition: opacity var(--speed) ease;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.18));
+}
+
+.partner-cursor[data-visible="false"] {
+  opacity: 0;
+}
+
+.partner-cursor svg {
+  display: block;
+  margin: -2px 0 0 -2px;
+}
+
+.partner-tag {
+  position: absolute;
+  top: 15px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-ui);
+  font-feature-settings: var(--font-features);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* Thinking: three dots breathe after the name. */
+.partner-dots {
+  display: none;
+  gap: 2px;
+}
+
+.partner-cursor[data-status="thinking"] .partner-dots,
+.partner-cursor[data-status="tidying"] .partner-dots {
+  display: inline-flex;
+}
+
+.partner-dots b {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: partner-dot 1.2s ease-in-out infinite;
+}
+
+.partner-dots b:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.partner-dots b:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+@keyframes partner-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .partner-dots b {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* ---- Frames (drawn by canvas/FrameLayer beneath the transparent canvas) --------------------- */
+
+.frame-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.board-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: var(--bg-frame);
+  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.03);
+  transform-origin: 0 0;
 }

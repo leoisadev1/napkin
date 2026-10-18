@@ -1,7 +1,20 @@
-// Collapsible history of the conversation, newest at the bottom.
+// Collapsible history of the conversation, newest at the bottom. Live speech arrives as many short phrases; a run of
+// them from one speaker reads as one paragraph under one name, like a comment in an activity feed.
 import { useEffect, useRef } from "react";
 import type { TranscriptEntry } from "../conversation/types";
 import { CloseIcon } from "./icons";
+
+type Turn = { id: string; role: TranscriptEntry["role"]; entries: TranscriptEntry[] };
+
+function turnsOf(entries: readonly TranscriptEntry[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const entry of entries) {
+    const last = turns.at(-1);
+    if (last !== undefined && last.role === entry.role) last.entries.push(entry);
+    else turns.push({ id: entry.id, role: entry.role, entries: [entry] });
+  }
+  return turns;
+}
 
 export function TranscriptPanel({ open, entries, onClose }: { open: boolean; entries: readonly TranscriptEntry[]; onClose: () => void }) {
   const listRef = useRef<HTMLOListElement>(null);
@@ -24,11 +37,17 @@ export function TranscriptPanel({ open, entries, onClose }: { open: boolean; ent
         <p className="transcript-empty">Nothing yet. What you say shows up here.</p>
       ) : (
         <ol className="transcript-list" ref={listRef}>
-          {entries.map((entry, index) => (
-            // Live speech arrives as many short phrases; label a run of them once.
-            <li key={entry.id} className="turn" data-role={entry.role} data-final={entry.final} data-continues={entries[index - 1]?.role === entry.role}>
-              {entries[index - 1]?.role !== entry.role && <span className="turn-who">{entry.role === "user" ? "You" : "Partner"}</span>}
-              <p className="turn-text">{entry.text}</p>
+          {turnsOf(entries).map((turn) => (
+            <li key={turn.id} className="turn" data-role={turn.role}>
+              <span className="turn-who">{turn.role === "user" ? "You" : "Partner"}</span>
+              <p className="turn-text">
+                {turn.entries.map((entry, index) => (
+                  <span key={entry.id} data-final={entry.final}>
+                    {index > 0 ? " " : ""}
+                    {entry.text.trim()}
+                  </span>
+                ))}
+              </p>
             </li>
           ))}
         </ol>
