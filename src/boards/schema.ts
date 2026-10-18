@@ -38,7 +38,7 @@ function isElementLike(value: unknown): value is ExcalidrawElement {
     ["x", "y", "width", "height", "version"].every((key) => typeof fields[key] === "number" && Number.isFinite(fields[key]))
   );
 }
-const SceneElement = z.custom<ExcalidrawElement>(isElementLike, { message: "Not an Excalidraw element" });
+export const SceneElement = z.custom<ExcalidrawElement>(isElementLike, { message: "Not an Excalidraw element" });
 
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/svg+xml", "image/gif", "image/webp", "image/bmp", "image/x-icon", "image/avif", "image/jfif"]);
 function isImageMime(value: unknown): value is BinaryFileData["mimeType"] {
@@ -70,10 +70,20 @@ export const StoredView = z.object({
 });
 export type StoredView = z.infer<typeof StoredView>;
 
+/** Keeps the items that parse and drops the rest, so one bad element or file never costs the whole board. */
+function lenientArray<T extends z.ZodType>(item: T) {
+  return z.array(z.unknown()).transform((items) =>
+    items.flatMap((raw): z.output<T>[] => {
+      const parsed = item.safeParse(raw);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
+}
+
 export const StoredScene = z.object({
-  elements: z.array(SceneElement),
-  files: z.array(StoredFile),
-  view: StoredView.nullable(),
+  elements: lenientArray(SceneElement),
+  files: lenientArray(StoredFile),
+  view: StoredView.nullable().catch(null),
 });
 export type StoredScene = z.infer<typeof StoredScene>;
 
@@ -82,7 +92,8 @@ export const BoardData = z.object({
   version: z.literal(1),
   id: BoardId,
   scene: StoredScene,
-  memory: ConversationMemory,
+  /** Losing the conversation is better than losing the drawing. */
+  memory: ConversationMemory.catch(EMPTY_MEMORY),
 });
 export type BoardData = z.infer<typeof BoardData>;
 
