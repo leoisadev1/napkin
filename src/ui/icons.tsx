@@ -2,6 +2,7 @@
 // from CSS. Components import from here so the set can be swapped in one place.
 import type { LucideProps } from "lucide-react";
 import {
+  ChevronDown,
   ArrowUp,
   Circle,
   Command,
@@ -47,6 +48,7 @@ function icon(Base: ComponentType<LucideProps>) {
 
 export const MicIcon = icon(Mic);
 export const MicOffIcon = icon(MicOff);
+export const ChevronDownIcon = icon(ChevronDown);
 export const AlertIcon = icon(TriangleAlert);
 export const SendIcon = icon(ArrowUp);
 export const TranscriptIcon = icon(MessageSquareText);

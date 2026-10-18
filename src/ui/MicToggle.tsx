@@ -3,7 +3,7 @@
 // While live, a mute button sits beside it: muted, the meter goes flat, the dot goes grey and the button reads "Muted".
 import { useEffect, useRef } from "react";
 import type { Conversation } from "../conversation/types";
-import { AlertIcon, MicIcon, MicOffIcon } from "./icons";
+import { AlertIcon, ChevronDownIcon, MicIcon, MicOffIcon } from "./icons";
 
 export type MicState = "off" | "connecting" | "live" | "error" | "disabled";
 
@@ -135,5 +135,23 @@ export function MuteButton({ muted, onToggle }: { muted: boolean; onToggle: () =
         <span>Muted</span>
       </span>
     </button>
+  );
+}
+
+/** Which mic to use. A native select sits invisibly over a small chevron, so the OS draws the list (good on phones). */
+export function MicPicker({ devices, current, onPick }: { devices: Conversation["micDevices"]; current: string | undefined; onPick: (deviceId: string) => void }) {
+  if (devices.length < 2) return null;
+  const selected = devices.find((device) => device.id === current) ?? devices[0];
+  return (
+    <span className="mic-picker" title={`Microphone: ${selected?.label ?? "default"}`}>
+      <ChevronDownIcon aria-hidden="true" />
+      <select aria-label="Microphone" value={selected?.id} onChange={(event) => onPick(event.target.value)}>
+        {devices.map((device) => (
+          <option key={device.id} value={device.id}>
+            {device.label}
+          </option>
+        ))}
+      </select>
+    </span>
   );
 }

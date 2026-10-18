@@ -3,7 +3,7 @@ import type { BoardBridge } from '../../src/conversation/types';
 // Separate process: voice-device doubles cannot leak into other tests.
 let captureReady: ((stop: () => void) => void) | undefined;
 
-mock.module('../../src/voice/microphone', () => ({ captureMicrophone: () => new Promise<() => void>(resolve => { captureReady = resolve; }) }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: () => new Promise<() => void>(resolve => { captureReady = resolve; }) }));
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class { setMuted() {} async connect() {} stop() {} resetPhrases() {} send() {} } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class {
   state = 'running'; async resume() {} async close() { this.state = 'closed'; }

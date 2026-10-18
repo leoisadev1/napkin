@@ -44,6 +44,14 @@ export interface Conversation {
   /** Mic muted: the voice session stays connected (instant unmute) but no audio is sent or transcribed. */
   muted: boolean;
   setMuted(muted: boolean): void;
+  /** Microphones the browser can see (labels appear once mic permission is granted). */
+  micDevices: { id: string; label: string }[];
+  /** The mic in use, or the remembered choice while voice is off. */
+  micDevice: string | undefined;
+  /** Remember a mic and switch to it now if voice is live. */
+  setMicDevice(deviceId: string): void;
+  /** Short note about the mic, for example after switching away from one that went silent, or "". */
+  micNotice: string;
   /** Current tappable next-step ideas from the agent (0-3). */
   suggestions: string[];
   /** Send a suggestion as a user turn and clear the chips. */

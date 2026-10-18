@@ -856,6 +856,46 @@ kbd {
   animation: none;
 }
 
+/* Mic picker: a chevron with an invisible native select on top, so the OS draws the device list. */
+.mic-picker {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 40px;
+  margin-left: -4px;
+  border-radius: var(--radius-md);
+  color: var(--text-4);
+  transition: background-color var(--speed-quick) ease, color var(--speed-quick) ease;
+}
+
+.mic-picker svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mic-picker select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.mic-picker:has(select:focus-visible) {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mic-picker:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+  }
+}
+
 /* Mute: an icon button beside the live toggle that grows a "Muted" label while muted. */
 .mute {
   display: inline-flex;
@@ -1049,7 +1089,14 @@ kbd {
   text-align: center;
 }
 
-.live-text:has(.live-error) {
+.live-notice {
+  color: var(--text-2);
+  white-space: normal;
+  text-align: center;
+}
+
+.live-text:has(.live-error),
+.live-text:has(.live-notice) {
   mask-image: none;
   -webkit-mask-image: none;
 }

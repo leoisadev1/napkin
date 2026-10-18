@@ -4,14 +4,14 @@ import type { BoardOp, BoardSummary } from '../../../shared/board';
 import { StretchQuestions } from './questions';
 import { agentEvents } from '../../agent/client';
 import { boardKeywords } from '../../voice/keywords';
-import { captureMicrophone } from '../../voice/microphone';
+import { captureMicrophone, listMicrophones, type MicDevice } from '../../voice/microphone';
 import { SpeechToText } from '../../voice/stt';
 import type { ConversationMemory } from '../memory';
 import type { BoardBridge, Conversation, ConversationPhase, TranscriptEntry } from '../types';
 
-type Snapshot = Pick<Conversation, 'refining' | 'pendingPhrases' | 'muted'> & { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
+type Snapshot = Pick<Conversation, 'refining' | 'pendingPhrases' | 'muted' | 'micDevices' | 'micDevice' | 'micNotice'> & { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
 export class ConversationEngine {
-  private state: Snapshot = { refining: false, pendingPhrases: [], muted: false, sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false };
+  private state: Snapshot = { refining: false, pendingPhrases: [], muted: false, sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false, micDevices: [], micDevice: undefined, micNotice: '' };
   private listeners = new Set<() => void>();
   private levels = new Set<(level: number) => void>();
   private outputLevels = new Set<(level: number) => void>();
@@ -37,6 +37,9 @@ export class ConversationEngine {
   private stretchId: string | undefined;
   private context: AudioContext | undefined;
   private stopMic: (() => void) | undefined;
+  /** Restarts capture on another device while voice stays connected; set only while voice is live. */
+  private switchMic: ((deviceId: string | undefined) => void) | undefined;
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private voiceGeneration = 0;
   private voiceConnection: 'connecting' | 'listening' = 'connecting';
   private cleanupVoice: (() => void) | undefined;
@@ -74,8 +77,24 @@ export class ConversationEngine {
       const response = await fetch('/api/status', { signal, cache: 'no-store' });
       if (!response.ok) throw new Error('Server unavailable');
       const status = ServerStatus.parse(await response.json()); this.update({ voiceAvailable: status.voice });
+      void this.refreshMicDevices();
     } catch { if (!signal.aborted) this.update({ phase: { kind: 'error', message: 'Could not connect to the server' } }); }
   }
+  private preferredMic(): string | undefined { try { return localStorage.getItem('rtw.mic') ?? undefined; } catch { return undefined; } }
+  private refreshMicDevices = async () => {
+    const devices: MicDevice[] = (await listMicrophones().catch(() => [])).map(({ id, label }) => ({ id, label }));
+    this.update({ micDevices: devices });
+  };
+  private showMicNotice(message: string) {
+    clearTimeout(this.noticeTimer); this.update({ micNotice: message });
+    this.noticeTimer = setTimeout(() => this.update({ micNotice: '' }), 8000);
+  }
+  /** Remember a mic for next time and, if voice is live, move to it now. */
+  setMicDevice = (deviceId: string) => {
+    try { localStorage.setItem('rtw.mic', deviceId); } catch {}
+    this.update({ micDevice: deviceId });
+    this.switchMic?.(deviceId);
+  };
   startVoice = async () => {
     if (this.state.phase.kind === 'error') this.stopVoice();
     if (this.context) return;
@@ -104,19 +123,37 @@ export class ConversationEngine {
       this.voiceConnection = 'listening';
       if (generation !== this.voiceGeneration) { stt.stop(); return; }
       let recoveringMic = false;
-      const capture = () => captureMicrophone({ context, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)),
-        onEnded: () => {
-          if (generation !== this.voiceGeneration || recoveringMic) return;
-          recoveringMic = true; this.update({ phase: { kind: 'connecting' } });
-          this.stopMic?.(); this.stopMic = undefined;
-          void capture().then(stop => {
-            if (generation !== this.voiceGeneration) { stop(); return; }
-            this.stopMic = stop;
-            this.update({ phase: this.resting() });
-          }).catch(error => {
-            if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Microphone disconnected. Tap Retry.' } }); }
-          }).finally(() => { recoveringMic = false; });
-        } });
+      /** Groups (physical devices) that went silent this session, so auto-switching never bounces back to them. */
+      const deadGroups = new Set<string>();
+      const restart = (deviceId: string | undefined, notice?: string) => {
+        if (generation !== this.voiceGeneration || recoveringMic) return;
+        recoveringMic = true; this.update({ phase: { kind: 'connecting' } });
+        this.stopMic?.(); this.stopMic = undefined;
+        void capture(deviceId).then(stop => {
+          if (generation !== this.voiceGeneration) { stop(); return; }
+          this.stopMic = stop;
+          this.update({ phase: this.resting() });
+          if (notice) this.showMicNotice(notice);
+        }).catch(error => {
+          if (generation === this.voiceGeneration) { this.stopVoice(); this.update({ phase: { kind: 'error', message: error instanceof Error ? error.message : 'Microphone disconnected. Tap Retry.' } }); }
+        }).finally(() => { recoveringMic = false; });
+      };
+      const onDead = async (dead: { group: string; label: string }) => {
+        if (generation !== this.voiceGeneration) return;
+        deadGroups.add(dead.group);
+        const others = (await listMicrophones().catch(() => [])).filter(device => !deadGroups.has(device.group));
+        if (generation !== this.voiceGeneration) return;
+        const name = dead.label || 'Your microphone';
+        const next = others[0];
+        if (!next) { this.showMicNotice(`No sound from ${name}. Check it's connected, or pick another mic.`); return; }
+        try { localStorage.setItem('rtw.mic', next.id); } catch {}
+        restart(next.id, `${name} went silent. Switched to ${next.label}.`);
+      };
+      const capture = (deviceId = this.preferredMic()) => captureMicrophone({ context, deviceId, onFrame: frame => stt.send(frame), onLevel: level => this.levels.forEach(listener => listener(level)),
+        onDevice: device => { this.update({ micDevice: device.id }); void this.refreshMicDevices(); },
+        onDead: device => { void onDead(device); },
+        onEnded: () => restart(undefined) });
+      this.switchMic = deviceId => restart(deviceId);
       let stop: () => void;
       try { stop = await capture(); }
       catch (error) {
@@ -140,7 +177,8 @@ export class ConversationEngine {
       context.addEventListener?.('statechange', stateChanged);
       if (typeof window !== 'undefined') { window.addEventListener('focus', resume); document.addEventListener('visibilitychange', resume); }
       const removeDebug = debugControl('suspendAudio', () => { void context.suspend(); });
-      this.cleanupVoice = () => { removeDebug(); context.removeEventListener?.('statechange', stateChanged); if (typeof window !== 'undefined') { window.removeEventListener('focus', resume); document.removeEventListener('visibilitychange', resume); } };
+      if (typeof navigator !== 'undefined') navigator.mediaDevices?.addEventListener?.('devicechange', this.refreshMicDevices);
+      this.cleanupVoice = () => { removeDebug(); navigator.mediaDevices?.removeEventListener?.('devicechange', this.refreshMicDevices); context.removeEventListener?.('statechange', stateChanged); if (typeof window !== 'undefined') { window.removeEventListener('focus', resume); document.removeEventListener('visibilitychange', resume); } };
       diagnostic('audio.context', { state: context.state });
       this.update({ phase: this.resting() });
 
@@ -163,7 +201,7 @@ export class ConversationEngine {
   stopVoice = () => {
     ++this.voiceGeneration;
     diagnostic('voice.stop'); this.cleanupVoice?.(); this.cleanupVoice = undefined; clearTimeout(this.phaseTimer);
-    this.stt?.stop(); this.stt = undefined; this.stopMic?.(); this.stopMic = undefined;
+    this.stt?.stop(); this.stt = undefined; this.stopMic?.(); this.stopMic = undefined; this.switchMic = undefined;
     this.interrupt();
     if (this.context) { void this.context.close(); this.context = undefined; }
     this.levels.forEach(listener => listener(0)); this.update({ phase: { kind: 'idle' }, partial: '' });

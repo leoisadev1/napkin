@@ -2,7 +2,7 @@ import { mock } from 'bun:test';
 import type { BoardBridge } from '../../src/conversation/types';
 let failVoice: ((error: Error) => void) | undefined;
 let connections = 0; let stopped = 0; let micStopped = 0; let closed = 0;
-mock.module('../../src/voice/microphone', () => ({ captureMicrophone: async () => () => { micStopped++; } }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: async () => () => { micStopped++; } }));
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class {
   constructor(callbacks: { onError: (error: Error) => void }) { failVoice = callbacks.onError; }
   setMuted() {} async connect() { connections++; if (process.argv[2] === 'connect' && connections === 1) throw new Error('STT connect failed'); }

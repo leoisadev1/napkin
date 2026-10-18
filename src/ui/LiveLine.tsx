@@ -73,7 +73,8 @@ export function LiveLine({ conversation, mic }: Props) {
   const error = phase.kind === "error" ? phase.message : null;
   const live = mic === "live";
   const waiting = segments.some((s) => s.status !== "drawn");
-  const visible = live || error !== null || (segments.length > 0 && (conversation.sketching || waiting));
+  const notice = conversation.micNotice.length > 0 ? conversation.micNotice : null;
+  const visible = live || error !== null || notice !== null || (segments.length > 0 && (conversation.sketching || waiting));
 
   const boxRef = useRef<HTMLParagraphElement>(null);
   const innerRef = useRef<HTMLSpanElement>(null);
@@ -84,10 +85,11 @@ export function LiveLine({ conversation, mic }: Props) {
     const inner = innerRef.current;
     if (box === null || inner === null) return;
     setOverflow(inner.scrollWidth > box.clientWidth);
-  }, [signature, partial, error, live, muted]);
+  }, [signature, partial, error, notice, live, muted]);
 
   let body: ReactNode;
   if (error !== null) body = <span className="live-error">{error}</span>;
+  else if (notice !== null) body = <span className="live-notice">{notice}</span>;
   else if (live && muted && !waiting) body = <span className="live-hint">{touch ? "Muted. Tap Muted to talk again." : "Muted. Press M to talk again."}</span>;
   else if (segments.length === 0 && partial.length === 0) body = live ? <span className="live-hint">Listening. Just start talking.</span> : null;
   else
