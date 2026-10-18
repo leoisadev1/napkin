@@ -8,6 +8,10 @@
   any accent but indigo (and red for live).
 */
 
+::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -162,6 +166,11 @@ kbd {
   left: 50%;
   top: calc(100% + 8px);
   translate: -50% 0;
+}
+
+.zoombar .ghost-btn:nth-child(-n + 2) .tip-up {
+  left: 0;
+  translate: 0 0;
 }
 
 .top-tools .ghost-btn:last-child .tip-down {
