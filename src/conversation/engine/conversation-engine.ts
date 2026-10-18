@@ -63,7 +63,7 @@ export class ConversationEngine {
   subscribeOutputLevel = (listener: (level: number) => void) => { this.outputLevels.add(listener); return () => { this.outputLevels.delete(listener); }; };
   private update(patch: Partial<Snapshot>) {
     if (patch.phase && (patch.phase.kind !== this.state.phase.kind || patch.phase.kind === 'error')) {
-      diagnostic('phase', { from: this.state.phase.kind, to: patch.phase.kind });
+      diagnostic('phase', { from: this.state.phase.kind, to: patch.phase.kind, ...(patch.phase.kind === 'error' ? { reason: patch.phase.message.slice(0, 120) } : {}) });
       clearTimeout(this.phaseTimer);
       if (patch.phase.kind === 'error' && this.stt) this.phaseTimer = setTimeout(() => { if (this.state.phase.kind === 'error') this.update({ phase: this.resting() }); }, 4000);
     }
@@ -283,7 +283,7 @@ export class ConversationEngine {
     if (!text || this.refineRequest || this.flights.length || this.queue.length) return;
     this.refineStretch = undefined;
     const abort = new AbortController(); this.refineRequest = abort; this.update({ refining: true });
-    const timer = setTimeout(() => abort.abort(), 12000);
+    const timer = setTimeout(() => abort.abort(), 14_000);
     const ops: BoardOp[] = []; const pending = new Set<string>();
     let done = false;
     try {
