@@ -1,6 +1,6 @@
 // Canvas motion that Excalidraw does not provide: staggered fade-in of new elements, a breathing
-// pending card, things gliding aside when the board makes room, and the partner's cursor gliding to whatever it
-// just drew. All updates use
+// pending card, things gliding aside when the board makes room, and a brief outline on whatever the partner just
+// drew (tracked by an invisible cursor, so the outline lands where attention goes). All updates use
 // CaptureUpdateAction.NEVER so they never enter undo history; the committed state is always the final one.
 import { CaptureUpdateAction, newElementWith } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
@@ -8,7 +8,6 @@ import type { LocalPoint } from "./builders";
 import { localPoint } from "./builders";
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from "@excalidraw/excalidraw/types";
 import type { Point } from "./geometry";
-import type { CursorStore, PartnerCursor } from "./cursorStore";
 import { metaData, readMeta } from "./meta";
 
 const FADE_MS = 280;
@@ -64,6 +63,9 @@ export const PARTNER_COLOR = { background: "#5e6ad2", stroke: "#5e6ad2" };
  */
 const PARTNER_ID = "partner-7";
 
+/** What the partner is doing; while set, its invisible cursor stays put instead of lingering out. */
+type PartnerStatus = "thinking" | "tidying" | null;
+
 type Fade = { start: number; target: number };
 type CursorState = {
   from: Point;
@@ -83,7 +85,7 @@ const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t 
 
 export type Animator = ReturnType<typeof createAnimator>;
 
-export function createAnimator(api: ExcalidrawImperativeAPI, options: { cursor?: CursorStore } = {}) {
+export function createAnimator(api: ExcalidrawImperativeAPI) {
   const fades = new Map<string, Fade>();
   const pulses = new Set<string>();
   const glides = new Map<string, Glide>();
@@ -91,7 +93,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI, options: { cursor?:
   let ghostSeq = 0;
   let cursor: CursorState | null = null;
   /** Shown beside the partner's name ("…", "Tidying up…"). While set, the cursor stays instead of fading away. */
-  let status: PartnerCursor["status"] = null;
+  let status: PartnerStatus = null;
   let frame: number | null = null;
   const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -277,16 +279,10 @@ export function createAnimator(api: ExcalidrawImperativeAPI, options: { cursor?:
     if (cursor === null || !isSocketId(PARTNER_SOCKET)) return;
     if (status === null && now - cursor.lastMove > CURSOR_LINGER_MS) {
       cursor = null;
-      options.cursor?.set(null);
       api.updateScene({ collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER });
       return;
     }
     const t = reduced() ? 1 : Math.min(1, (now - cursor.start) / CURSOR_MS);
-    const k = easeInOut(t);
-    const x = cursor.from.x + (cursor.to.x - cursor.from.x) * k;
-    const y = cursor.from.y + (cursor.to.y - cursor.from.y) * k;
-    // The shell draws the cursor itself (ui/PartnerCursor); Excalidraw only outlines what the partner just drew.
-    options.cursor?.set({ x, y, status });
     const partner: Collaborator = {
       id: PARTNER_ID,
       username: "Partner",
@@ -353,7 +349,7 @@ export function createAnimator(api: ExcalidrawImperativeAPI, options: { cursor?:
   }
 
   /** Sets or clears the label beside the cursor. Clearing lets an idle cursor fade after the usual linger. */
-  function setStatus(next: PartnerCursor["status"]) {
+  function setStatus(next: PartnerStatus) {
     if (next === status) return;
     status = next;
     if (cursor !== null) cursor = { ...cursor, lastMove: performance.now() };
@@ -375,7 +371,6 @@ export function createAnimator(api: ExcalidrawImperativeAPI, options: { cursor?:
     exits.clear();
     cursor = null;
     status = null;
-    options.cursor?.set(null);
   }
 
   return { anticipate, setStatus, fadeIn, pulse, stopPulse, pointAt, glideFrom, enter, fadeOutCopies, dropGhosts, finishMotion, finalGeometry, dispose };

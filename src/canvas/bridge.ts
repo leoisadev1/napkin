@@ -8,7 +8,6 @@ import { NodeId } from "../../shared/board";
 import type { BoardBridge } from "../conversation/types";
 import type { Animator } from "./animator";
 import { createAnimator } from "./animator";
-import type { CursorStore } from "./cursorStore";
 import type { Built, IdFactory } from "./builders";
 import { arrowGeometry, buildArrow, buildFrame, DORMANT_FRAME_NAME, buildImage, buildMockup, buildPending, buildShape, wrap } from "./builders";
 import type { DiagramIds, EntryStep } from "./diagramBuild";
@@ -263,8 +262,8 @@ function labelOf(entry: NodeEntry, byId: ReadonlyMap<string, ExcalidrawElement>)
   return textOf(text);
 }
 
-export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onError?: (error: unknown) => void; cursor?: CursorStore } = {}): CanvasBridge {
-  const animator: Animator = createAnimator(api, { cursor: options.cursor });
+export function createBoardBridge(api: ExcalidrawImperativeAPI, options: { onError?: (error: unknown) => void } = {}): CanvasBridge {
+  const animator: Animator = createAnimator(api);
   const titleListeners = new Set<(title: string) => void>();
   let title = DEFAULT_TITLE;
   let seq = 0;

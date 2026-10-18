@@ -4,8 +4,6 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { BoardOp } from "../../shared/board";
 import type { CanvasBridge, PartnerActivity, PointerSample } from "./bridge";
 import { createBoardBridge, DEFAULT_TITLE } from "./bridge";
-import type { CursorStore } from "./cursorStore";
-import { createCursorStore } from "./cursorStore";
 
 type Queued =
   | { kind: "apply"; op: BoardOp }
@@ -14,14 +12,11 @@ type Queued =
 
 export type BridgeHost = {
   bridge: CanvasBridge;
-  /** The partner's cursor, published for the shell to draw. */
-  cursor: CursorStore;
   attach(api: ExcalidrawImperativeAPI): () => void;
 };
 
 export function createBridgeHost(options: { onError?: (error: unknown) => void } = {}): BridgeHost {
   let real: CanvasBridge | null = null;
-  const cursor = createCursorStore();
   let title = DEFAULT_TITLE;
   const queue: Queued[] = [];
   let pointer: PointerSample = null;
@@ -71,7 +66,7 @@ export function createBridgeHost(options: { onError?: (error: unknown) => void }
   };
 
   function attach(api: ExcalidrawImperativeAPI) {
-    const instance = createBoardBridge(api, { ...options, cursor });
+    const instance = createBoardBridge(api, options);
     instance.setTitle(title);
     const unsubscribe = instance.subscribeTitle(notify);
     real = instance;
@@ -101,5 +96,5 @@ export function createBridgeHost(options: { onError?: (error: unknown) => void }
     };
   }
 
-  return { bridge, cursor, attach };
+  return { bridge, attach };
 }
