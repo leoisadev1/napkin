@@ -30,6 +30,9 @@ export type BoardPersistence = {
   start(): () => void;
 };
 
+/** The theme of the last board shown in this page, so switching boards keeps it. Unset until a board reports one. */
+let pageTheme: "light" | "dark" | undefined;
+
 type Live = { elements: readonly ExcalidrawElement[]; appState: AppState; files: BinaryFiles };
 
 export function createPersistence(session: BoardSession, bridge: CanvasBridge, options: { onError?: (error: unknown) => void } = {}): BoardPersistence {
@@ -74,17 +77,17 @@ export function createPersistence(session: BoardSession, bridge: CanvasBridge, o
     (forced ? store.saveNow(record, { touched: wasTouched }) : store.save(record, { touched: wasTouched })).catch(report);
     if (fingerprint !== null && fingerprint !== thumbFor) {
       thumbFor = fingerprint;
-      void renderThumb(scene.elements, live?.files ?? {}, live?.appState.viewBackgroundColor ?? "#ffffff");
+      void renderThumb(scene.elements, live?.files ?? {}, live?.appState.viewBackgroundColor ?? "#ffffff", live?.appState.theme === "dark");
     }
   }
 
-  async function renderThumb(elements: readonly ExcalidrawElement[], files: BinaryFiles, background: string) {
+  async function renderThumb(elements: readonly ExcalidrawElement[], files: BinaryFiles, background: string, dark: boolean) {
     if (elements.length === 0) return;
     try {
       const blob = await exportToBlob({
         elements,
         files,
-        appState: { exportBackground: true, viewBackgroundColor: background, exportWithDarkMode: false },
+        appState: { exportBackground: true, viewBackgroundColor: background, exportWithDarkMode: dark },
         maxWidthOrHeight: THUMB_SIZE,
         mimeType: "image/png",
         exportPadding: 16,
@@ -113,6 +116,7 @@ export function createPersistence(session: BoardSession, bridge: CanvasBridge, o
   function attach(api: ExcalidrawImperativeAPI) {
     const unsubscribe = api.onChange((elements, appState, files) => {
       live = { elements, appState, files };
+      pageTheme = appState.theme;
       const fingerprint = sceneFingerprint(elements);
       if (restoring) {
         restoring = false;
@@ -161,5 +165,5 @@ export function createPersistence(session: BoardSession, bridge: CanvasBridge, o
   }
 
   session.handle.flush = flush;
-  return { initialScene: initialDataOf(session.data.scene), conversation: { memory: session.data.memory, onMemory }, attach, start };
+  return { initialScene: initialDataOf(session.data.scene, { theme: pageTheme }), conversation: { memory: session.data.memory, onMemory }, attach, start };
 }

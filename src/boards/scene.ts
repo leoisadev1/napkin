@@ -63,18 +63,20 @@ function isNormalizedZoom(value: number): value is NormalizedZoomValue {
 }
 
 /** Excalidraw initialData for a stored scene. Excalidraw's restore() repairs the elements on load. */
-export function initialDataOf(scene: StoredScene): ExcalidrawInitialDataState {
+export function initialDataOf(scene: StoredScene, options: { theme?: "light" | "dark" } = {}): ExcalidrawInitialDataState {
   const files: BinaryFiles = {};
   for (const file of scene.files) files[file.id] = { ...file, lastRetrieved: Date.now() };
   const view = scene.view;
   const zoom = view !== null && isNormalizedZoom(view.zoom) ? view.zoom : null;
+  // The theme is the app's, not the board's: the one in use wins, and the board's saved one only seeds a fresh page.
+  const theme = options.theme ?? view?.theme;
   return {
     elements: scene.elements,
     files,
-    appState:
-      view === null || zoom === null
-        ? {}
-        : { scrollX: view.scrollX, scrollY: view.scrollY, zoom: { value: zoom }, theme: view.theme, viewBackgroundColor: view.viewBackgroundColor },
+    appState: {
+      ...(view === null || zoom === null ? {} : { scrollX: view.scrollX, scrollY: view.scrollY, zoom: { value: zoom }, viewBackgroundColor: view.viewBackgroundColor }),
+      ...(theme === undefined ? {} : { theme }),
+    },
     scrollToContent: view === null && scene.elements.length > 0,
   };
 }
