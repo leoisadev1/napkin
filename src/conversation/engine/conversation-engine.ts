@@ -5,6 +5,7 @@ import { agentEvents } from '../../agent/client';
 import { boardKeywords } from '../../voice/keywords';
 import { captureMicrophone } from '../../voice/microphone';
 import { SpeechToText } from '../../voice/stt';
+import type { ConversationMemory } from '../memory';
 import type { BoardBridge, Conversation, ConversationPhase, TranscriptEntry } from '../types';
 
 type Snapshot = Pick<Conversation, 'refining' | 'pendingPhrases' | 'muted'> & { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
@@ -38,7 +39,19 @@ export class ConversationEngine {
   private voiceGeneration = 0;
   private bridge: BoardBridge;
   private options;
-  constructor(bridge: BoardBridge, options: { pipeline?: boolean; onTiming?: (event: { stage: 'request' | 'first_op' | 'complete'; ids: string[]; text: string; at: number }) => void } = {}) { this.bridge = bridge; this.options = options; }
+  constructor(bridge: BoardBridge, options: { pipeline?: boolean; memory?: ConversationMemory; onTiming?: (event: { stage: 'request' | 'first_op' | 'complete'; ids: string[]; text: string; at: number }) => void } = {}) {
+    this.bridge = bridge; this.options = options;
+    const memory = options.memory;
+    if (memory) {
+      this.history = memory.history.slice(-20); this.imageAttempted = memory.imageAttempted;
+      for (const op of memory.diagrams) this.diagrams.set(op.id, op);
+      for (const op of memory.mockups) this.mockups.set(op.id, op);
+      this.state = { ...this.state, suggestions: memory.suggestions, transcript: memory.transcript.map(entry => ({ ...entry, final: true })) };
+    }
+  }
+  /** What this conversation knows about its board, for saving with the board (see src/boards). */
+  exportMemory = (): ConversationMemory => ({ history: this.history, transcript: this.state.transcript, suggestions: this.state.suggestions,
+    diagrams: [...this.diagrams.values()], mockups: [...this.mockups.values()], imageAttempted: this.imageAttempted });
   setBridge(bridge: BoardBridge) { this.bridge = bridge; }
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
