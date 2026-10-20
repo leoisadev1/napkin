@@ -82,10 +82,15 @@ export const ImageToolIcon = icon(Image);
 export const EraserToolIcon = icon(Eraser);
 
 /** Brand mark: a rounded tile in the accent with a spoken-line squiggle, the board's voice drawn as a stroke. */
+/** The Napkin mark: a folded paper napkin, tilted like one lying on a table, with a spoken line sketched across it. */
 export const Mark = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
     <rect width="20" height="20" rx="5" fill="var(--accent)" />
-    <path d="M4.5 11.5c1.2-3 2.4-3 3.4 0s2.2 3 3.4 0 2.3-3 4.2-1" stroke="var(--on-accent)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <g transform="rotate(-9 10 10)">
+      <rect x="4.4" y="4.4" width="11.2" height="11.2" rx="1.6" fill="var(--on-accent)" />
+      <path d="M10 4.9v10.2M4.9 10h10.2" stroke="var(--accent)" strokeOpacity=".18" strokeWidth=".6" />
+      <path d="M6.4 11.2c.8-2.1 1.6-2.1 2.3 0s1.6 2.1 2.4 0 1.5-2.1 2.4-.8" stroke="var(--accent)" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
+    </g>
   </svg>
 );
 
