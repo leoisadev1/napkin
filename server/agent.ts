@@ -19,7 +19,7 @@ phone|desktop ID [PLACEMENT] "Title" | header:Title | input:Email | button:Conti
 update ID [color:COLOR] ["New label"]
 move ID PLACEMENT
 del ID [ID ...]
-title "Board title"
+title "Board title" (when the Board is still "Untitled board" and the topic is clear, emit this once, first)
 clear
 image ID "Generation prompt" "Caption" [PLACEMENT]
 suggest: next addition | another addition | optional third

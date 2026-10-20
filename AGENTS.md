@@ -1,4 +1,4 @@
-# real-time-whiteboard
+# Napkin (real-time-whiteboard)
 
 A voice-first brainstorming whiteboard. You talk; an AI partner draws on an Excalidraw canvas in real time (boxes, arrows, frames, mini UI mockups, generated images) and answers out loud in a short sentence. You can interrupt it mid-sentence.
 
@@ -7,8 +7,8 @@ Built for the Active Builders x Gradium challenge (deadline Tue Oct 20 2026, 9pm
 ## Architecture
 
 - **Voice: Gradium.** Browser streams mic PCM to Gradium STT over WebSocket and plays Gradium TTS from another WebSocket. The server only mints short-lived tokens (`GET https://api.gradium.ai/api/api-keys/token` with `x-api-key`); the API key never reaches the browser. Semantic VAD decides when a user turn has ended. Gradium facts, limits, and gotchas: `/home/leo/.t3/scratch/2026-10-17-https-activebuilders-dev-hackathon-gradium-5ab1c7a4/swarm/01-tech.md`. Docs: https://docs.gradium.ai (index at https://docs.gradium.ai/llms.txt).
-- **Brain: the user's ChatGPT plan** via Login with ChatGPT (`@opencoredev/loginwithchatgpt-*`, docs in `/tmp/lwc/docs/content/docs/` and `/tmp/lwc/skills/login-with-chatgpt/SKILL.md`). No OpenAI API key. Pick a fast model from the account's model list and use low reasoning effort. Images use `chatgpt.images.generate()`.
-- **Dev fallback LLM.** When no ChatGPT session exists and `DEV_LLM_BASE_URL` is set, the server uses that OpenAI-compatible endpoint (locally the CLIProxyAPI at `http://127.0.0.1:8317/v1`, key in `~/.cli-proxy-api/.api-key`). This exists only so automated tests run without a human signing in. With `NODE_ENV=production`, all `DEV_LLM_*` and `DEV_IMAGE_MODEL` settings are ignored unless `ALLOW_DEV_LLM_IN_PRODUCTION=1` is explicitly set. The default is `0`: status reports `devLlm:false`, and agent requests and voice tokens require a ChatGPT session. Opting in also enables the voice-token session exemption. Never ship it as the product path.
+- **Brain: Claude Haiku 5.5** through the Claude API (`@ai-sdk/anthropic`, key in `ANTHROPIC_API_KEY`). Live and suggest modes run with thinking disabled and effort low; refine and typed turns use adaptive thinking at low effort. Spend is capped per calendar month by `server/budget.ts` (`MONTHLY_BUDGET_USD`). No image generation on this provider; image lines are dropped.
+- **Dev LLM.** When `DEV_LLM_BASE_URL` is set, the server uses that OpenAI-compatible endpoint instead (locally the CLIProxyAPI at `http://127.0.0.1:8317/v1`). Production ignores it unless `ALLOW_DEV_LLM_IN_PRODUCTION=1`.
 - **Canvas: Excalidraw** (`@excalidraw/excalidraw` 0.18). The agent emits semantic `BoardOp`s (`shared/board.ts`); the canvas turns them into elements with auto-layout.
 
 ## Contracts (frozen; change only with the orchestrator)

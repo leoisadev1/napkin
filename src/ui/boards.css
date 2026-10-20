@@ -334,6 +334,11 @@
   outline-offset: -2px;
 }
 
+/* The composer's whole bar shows focus, so the field inside it doesn't draw a second ring. */
+.boards-shell .composer-input:focus-visible {
+  outline: none;
+}
+
 /* ---- Row menu -------------------------------------------------------------------------------- */
 
 .board-menu {
