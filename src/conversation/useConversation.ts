@@ -11,6 +11,6 @@ export function useConversation(bridge: BoardBridge, options: ConversationOption
     const abort = new AbortController(); void engine.loadStatus(abort.signal);
     return () => { abort.abort(); engine.stopVoice(); };
   }, [engine]);
-  return { ...snapshot, setMuted: engine.setMuted, setMicDevice: engine.setMicDevice, subscribeLevel: engine.subscribeLevel, subscribeOutputLevel: engine.subscribeOutputLevel,
+  return { ...snapshot, setMuted: engine.setMuted, setMicDevice: engine.setMicDevice, openMicMenu: engine.openMicMenu, closeMicMenu: engine.closeMicMenu, pickMic: engine.pickMic, subscribeLevel: engine.subscribeLevel, subscribeOutputLevel: engine.subscribeOutputLevel,
     startVoice: engine.startVoice, stopVoice: engine.stopVoice, sendText: engine.sendText, pickSuggestion: engine.pickSuggestion, interrupt: engine.interrupt };
 }

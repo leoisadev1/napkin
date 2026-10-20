@@ -50,6 +50,12 @@ export interface Conversation {
   micDevice: string | undefined;
   /** Remember a mic and switch to it now if voice is live. */
   setMicDevice(deviceId: string): void;
+  /** The mic chooser. Talk opens it on its own when there are several mics and none has been picked yet. */
+  micMenu: "closed" | "loading" | "open";
+  openMicMenu(): void;
+  closeMicMenu(): void;
+  /** Choose a mic from the menu; if Talk opened the menu, voice starts on it. */
+  pickMic(deviceId: string): void;
   /** Short note about the mic, for example after switching away from one that went silent, or "". */
   micNotice: string;
   /** Current tappable next-step ideas from the agent (0-3). */

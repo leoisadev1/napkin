@@ -27,6 +27,17 @@ export async function listMicrophones(): Promise<(MicDevice & { group: string })
   return devices.filter(device => device.kind === 'audioinput' && device.deviceId !== 'default' && device.deviceId !== 'communications' && device.deviceId !== '')
     .map((device, index) => ({ id: device.deviceId, group: device.groupId, label: device.label || `Microphone ${index + 1}` }));
 }
+/** Lists mics, first asking for permission if the browser still hides their names. The probe stream closes right away. */
+export async function unlockMicrophones() {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  if (!devices.some(device => device.kind === 'audioinput' && device.label)) {
+    // A default mic that can't open (an iPhone out of range) still grants permission, so the list fills in anyway.
+    try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(track => track.stop()); }
+    catch (error) { diagnostic('mic.unlock', { reason: error instanceof DOMException ? error.name : 'unknown' }); }
+  }
+  return listMicrophones();
+}
 const constraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 async function openStream(deviceId: string | undefined) {
   if (!deviceId) return navigator.mediaDevices.getUserMedia({ audio: constraints });

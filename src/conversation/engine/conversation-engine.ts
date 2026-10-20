@@ -4,14 +4,14 @@ import type { BoardOp, BoardSummary } from '../../../shared/board';
 import { StretchQuestions } from './questions';
 import { agentEvents } from '../../agent/client';
 import { boardKeywords } from '../../voice/keywords';
-import { captureMicrophone, listMicrophones, type MicDevice } from '../../voice/microphone';
+import { captureMicrophone, listMicrophones, unlockMicrophones, type MicDevice } from '../../voice/microphone';
 import { SpeechToText } from '../../voice/stt';
 import type { ConversationMemory } from '../memory';
 import type { BoardBridge, Conversation, ConversationPhase, TranscriptEntry } from '../types';
 
-type Snapshot = Pick<Conversation, 'refining' | 'pendingPhrases' | 'muted' | 'micDevices' | 'micDevice' | 'micNotice'> & { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
+type Snapshot = Pick<Conversation, 'refining' | 'pendingPhrases' | 'muted' | 'micDevices' | 'micDevice' | 'micNotice' | 'micMenu'> & { sketching: boolean; suggestions: string[]; phase: ConversationPhase; transcript: TranscriptEntry[]; partial: string; voiceAvailable: boolean };
 export class ConversationEngine {
-  private state: Snapshot = { refining: false, pendingPhrases: [], muted: false, sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false, micDevices: [], micDevice: undefined, micNotice: '' };
+  private state: Snapshot = { refining: false, pendingPhrases: [], muted: false, sketching: false, suggestions: [], phase: { kind: 'idle' }, transcript: [], partial: '', voiceAvailable: false, micDevices: [], micDevice: undefined, micNotice: '', micMenu: 'closed' };
   private listeners = new Set<() => void>();
   private levels = new Set<(level: number) => void>();
   private outputLevels = new Set<(level: number) => void>();
@@ -81,9 +81,24 @@ export class ConversationEngine {
     } catch { if (!signal.aborted) this.update({ phase: { kind: 'error', message: 'Could not connect to the server' } }); }
   }
   private preferredMic(): string | undefined { try { return localStorage.getItem('rtw.mic') ?? undefined; } catch { return undefined; } }
-  private refreshMicDevices = async () => {
-    const devices: MicDevice[] = (await listMicrophones().catch(() => [])).map(({ id, label }) => ({ id, label }));
-    this.update({ micDevices: devices });
+  private refreshMicDevices = async (unlock = false) => {
+    const devices: MicDevice[] = (await (unlock ? unlockMicrophones() : listMicrophones()).catch(() => [])).map(({ id, label }) => ({ id, label }));
+    this.update({ micDevices: devices, micDevice: this.state.micDevice ?? this.preferredMic() });
+    return devices;
+  };
+  private onDeviceChange = () => { void this.refreshMicDevices(); };
+  /** Whether picking from the mic menu should then start voice (the menu was opened by Talk). */
+  private menuStartsVoice = false;
+  openMicMenu = async () => {
+    this.menuStartsVoice = false; this.update({ micMenu: 'loading' });
+    await this.refreshMicDevices(true);
+    if (this.state.micMenu === 'loading') this.update({ micMenu: 'open' });
+  };
+  closeMicMenu = () => { this.menuStartsVoice = false; this.update({ micMenu: 'closed' }); };
+  pickMic = (deviceId: string) => {
+    const start = this.menuStartsVoice;
+    this.closeMicMenu(); this.setMicDevice(deviceId);
+    if (start) void this.startVoice();
   };
   private showMicNotice(message: string) {
     clearTimeout(this.noticeTimer); this.update({ micNotice: message });
@@ -98,6 +113,11 @@ export class ConversationEngine {
   startVoice = async () => {
     if (this.state.phase.kind === 'error') this.stopVoice();
     if (this.context) return;
+    // Never silently take the system default (often a Continuity iPhone): with several mics and no valid choice, ask first.
+    const preferred = this.preferredMic();
+    const devices = await this.refreshMicDevices(true);
+    if (this.context) return;
+    if (devices.length > 1 && !devices.some(device => device.id === preferred)) { this.menuStartsVoice = true; this.update({ micMenu: 'open' }); return; }
     const generation = ++this.voiceGeneration;
     this.update({ phase: { kind: 'connecting' } });
     let context: AudioContext;
@@ -183,8 +203,8 @@ export class ConversationEngine {
       context.addEventListener?.('statechange', stateChanged);
       if (typeof window !== 'undefined') { window.addEventListener('focus', resume); document.addEventListener('visibilitychange', resume); }
       const removeDebug = debugControl('suspendAudio', () => { void context.suspend(); });
-      if (typeof navigator !== 'undefined') navigator.mediaDevices?.addEventListener?.('devicechange', this.refreshMicDevices);
-      this.cleanupVoice = () => { removeDebug(); navigator.mediaDevices?.removeEventListener?.('devicechange', this.refreshMicDevices); context.removeEventListener?.('statechange', stateChanged); if (typeof window !== 'undefined') { window.removeEventListener('focus', resume); document.removeEventListener('visibilitychange', resume); } };
+      if (typeof navigator !== 'undefined') navigator.mediaDevices?.addEventListener?.('devicechange', this.onDeviceChange);
+      this.cleanupVoice = () => { removeDebug(); navigator.mediaDevices?.removeEventListener?.('devicechange', this.onDeviceChange); context.removeEventListener?.('statechange', stateChanged); if (typeof window !== 'undefined') { window.removeEventListener('focus', resume); document.removeEventListener('visibilitychange', resume); } };
       diagnostic('audio.context', { state: context.state });
       this.update({ phase: this.resting() });
 

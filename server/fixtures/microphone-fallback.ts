@@ -7,7 +7,7 @@ Object.defineProperty(globalThis, 'AudioContext', { value: class {
 } });
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class { setMuted() {} async connect() {} stop() {} resetPhrases() {} send() {} } }));
 let captures = 0;
-mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: async () => {
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], unlockMicrophones: async () => [], captureMicrophone: async () => {
   if (++captures === 1) throw new DOMException('Unsupported capture rate', 'NotSupportedError'); return () => {};
 } }));
 const original = globalThis.fetch;

@@ -17,7 +17,7 @@ mock.module('../../src/voice/stt', () => ({ SpeechToText: class {
   constructor(callbacks: NonNullable<typeof speech>) { speech = callbacks; }
   setMuted() {} async connect() {} send() {} stop() {} flushPhrases() {} resetPhrases() { speech?.onPartial(''); }
 } }));
-mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: async () => () => {} }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], unlockMicrophones: async () => [], captureMicrophone: async () => () => {} }));
 mock.module('../../src/voice/tts', () => ({ TextToSpeech: class { constructor() { throw new Error('TTS must never open'); } } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class { state = 'running'; async resume() {} async close() { this.state = 'closed'; } } });
 const { ConversationEngine } = await import('../../src/conversation/engine/conversation-engine');

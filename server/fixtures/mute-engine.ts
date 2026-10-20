@@ -11,7 +11,7 @@ mock.module('../../src/voice/socket', () => ({ openVoiceSocket: async (args: Par
   socketCallbacks = args; connections++;
   return { readyState: WebSocket.OPEN, bufferedAmount: 0, send: (message: string) => { sent.push(message); }, close() {} };
 } }));
-mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: async (args: Parameters<typeof captureMicrophone>[0]) => { microphone = args; return () => {}; } }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], unlockMicrophones: async () => [], captureMicrophone: async (args: Parameters<typeof captureMicrophone>[0]) => { microphone = args; return () => {}; } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class { state = 'running'; async resume() {} async close() { this.state = 'closed'; } } });
 const requests: { input: AgentRequest; signal: AbortSignal | null | undefined; stream: ReadableStreamDefaultController<Uint8Array> }[] = [];
 const original = globalThis.fetch;
