@@ -13,7 +13,6 @@ import { EmptyState } from "./ui/EmptyState";
 import { micState, MUTE_KEY } from "./ui/MicToggle";
 import { Keys } from "./ui/Keys";
 import { BoardIcon, CommandIcon, MicIcon, MicOffIcon, MoonIcon, NewBoardIcon, PencilIcon, SidebarIcon, SunIcon, TranscriptIcon, TrashIcon } from "./ui/icons";
-import { SignIn } from "./ui/SignIn";
 import { TitleIsland } from "./ui/TitleIsland";
 import { TranscriptPanel } from "./ui/TranscriptPanel";
 import { useTheme } from "./ui/useTheme";
@@ -69,7 +68,7 @@ export default function App({ board, workspace }: BoardScreenProps) {
   useEffect(() => host.bridge.subscribeTitle(setTitle), [host]);
 
   useEffect(() => {
-    document.title = `${title} · Whiteboard`;
+    document.title = `${title} · Napkin`;
   }, [title]);
 
   // Esc cancels a turn the partner is still working on.
@@ -134,7 +133,7 @@ export default function App({ board, workspace }: BoardScreenProps) {
         confirm: "Press Enter again to delete this board",
         run: () => workspace.remove(id),
       },
-      { id: "sidebar", group: "Workspace", label: sidebar.open ? "Hide sidebar" : "Show sidebar", Icon: SidebarIcon, shortcut: "[", keywords: "boards list panel", run: () => sidebar.setOpen(!sidebar.open) },
+      { id: "sidebar", group: "Workspace", label: sidebar.open ? "Hide sidebar" : "Show sidebar", Icon: SidebarIcon, shortcut: `${MOD} B`, keywords: "boards list panel", run: () => sidebar.setOpen(!sidebar.open) },
     ];
   }, [voiceAvailable, live, muted, setMuted, startVoice, stopVoice, transcriptOpen, workspace, board.meta.id]);
 
@@ -160,7 +159,6 @@ export default function App({ board, workspace }: BoardScreenProps) {
         sidebar={workspace.sidebar.open && !workspace.sidebar.drawer ? null : { onShow: () => workspace.sidebar.setOpen(true) }}
       />
       <div className="top-right">
-        <SignIn />
         <div className="panel top-tools">
           <button type="button" className="ghost-btn" aria-label="Command menu" aria-keyshortcuts="Control+K Meta+K" onClick={() => setMenuOpen(true)}>
             <CommandIcon />

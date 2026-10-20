@@ -1,15 +1,7 @@
 import { expect, test } from 'bun:test';
 import { z } from 'zod';
-import { chooseModel } from './llm';
 import { runAgent } from './agent';
 
-test('account model selection prefers GPT-6.1 Sol, then fast fallback variants', () => {
-  expect(chooseModel(['gpt-6-sol', 'gpt-6-luna', 'gpt-spark'])).toBe('gpt-spark');
-  expect(chooseModel(['gpt-6-sol', 'gpt-mini'])).toBe('gpt-mini');
-  expect(chooseModel(['gpt-6-sol'])).toBe('gpt-6-sol');
-  expect(chooseModel([])).toBeUndefined();
-  expect(chooseModel(['gpt-mini', 'gpt-6.1-sol'])).toBe('gpt-6.1-sol');
-});
 test('live mode normalizes unsupported efforts on the wire without parallel speech/tools', async () => {
   const previous = { ...process.env }; const efforts: string[] = [];
   const proxy = Bun.serve({ port: 0, async fetch(request) {
@@ -30,8 +22,3 @@ test('live mode normalizes unsupported efforts on the wire without parallel spee
   }
 });
 
-test('live account discovery prefers a fast model while refine keeps Sol', () => {
-  expect(chooseModel(['gpt-6.1-sol', 'gpt-6-luna'], 'live')).toBe('gpt-6.1-sol');
-  expect(chooseModel(['gpt-6.1-sol', 'gpt-5.4-mini'], 'live')).toBe('gpt-5.4-mini');
-  expect(chooseModel(['gpt-6.1-sol', 'gpt-6-luna'], 'refine')).toBe('gpt-6.1-sol');
-});

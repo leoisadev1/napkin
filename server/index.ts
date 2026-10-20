@@ -1,7 +1,7 @@
 import { resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { AgentRequest, ServerStatus, type AgentEvent } from '../shared/agent-protocol';
-import { auth } from './auth';
+import { budgetLeft } from './budget';
 import { runAgent } from './agent';
 import { config, log } from './config';
 
@@ -35,18 +35,13 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
   const url = new URL(request.url);
   const origin = request.headers.get('origin');
   if (origin && origin !== url.origin && !config().ALLOWED_ORIGINS.includes(origin) && (url.pathname === '/api/agent' || url.pathname === '/api/gradium/token')) return Response.json({ error: 'Origin not allowed' }, { status: 403 });
-  if (url.pathname.startsWith('/api/chatgpt/')) return auth.handler(request);
   if (url.pathname === '/api/status' && request.method === 'GET') {
-    const session = await auth.getSession(request);
-    return Response.json(ServerStatus.parse({ chatgpt: session.status === 'authenticated'
-      ? { kind: 'signed_in', email: session.user?.email ?? null, plan: session.user?.plan ?? null } : { kind: 'signed_out' },
-      devLlm: Boolean(config().DEV_LLM_BASE_URL), voice: Boolean(config().GRADIUM_API_KEY) }), { headers: { 'cache-control': 'no-store' } });
+    return Response.json(ServerStatus.parse({ voice: Boolean(config().GRADIUM_API_KEY) }), { headers: { 'cache-control': 'no-store' } });
   }
   if (url.pathname === '/api/gradium/token' && request.method === 'GET') {
     const key = config().GRADIUM_API_KEY;
     if (!key) return Response.json({ error: 'Voice is not configured' }, { status: 503 });
-    const session = await auth.getSession(request);
-    if (session.status !== 'authenticated' && !config().DEV_LLM_BASE_URL) return Response.json({ error: 'Sign in with ChatGPT to use voice' }, { status: 401 });
+    if (!await budgetLeft()) return Response.json({ error: 'This demo has used its monthly budget. Try again next month.' }, { status: 503 });
     if (!allow(`voice:${ip}`, 30)) return Response.json({ error: 'Too many voice connections' }, { status: 429, headers: { 'retry-after': '60' } });
     try {
       const upstream = await fetch('https://api.gradium.ai/api/api-keys/token', { headers: { 'x-api-key': key }, signal: AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]) });
@@ -57,6 +52,7 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
   if (url.pathname === '/api/agent' && request.method === 'POST') {
     // Talking fast sends a phrase every second or two, plus suggestions and tidy-ups; this caps a scripted abuser of the shared key.
     if (!allow(`agent:${ip}`, 90)) return Response.json({ error: 'Too many requests. Wait a minute and try again.' }, { status: 429, headers: { 'retry-after': '60' } });
+    if (!await budgetLeft()) return Response.json({ error: 'This demo has used its monthly budget. Try again next month.' }, { status: 503 });
     if (Number(request.headers.get('content-length') ?? 0) > 256_000) return Response.json({ error: 'Request too large' }, { status: 413 });
     let input: AgentRequest;
     try { input = AgentRequest.parse(JSON.parse(await readBoundedBody(request))); }
@@ -72,7 +68,7 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
           catch (error) {
             if (!signal.aborted) {
               log('agent_failed', { kind: error instanceof Error ? error.name : 'unknown' });
-              emit({ type: 'error', message: error instanceof Error && error.message === 'Sign in with ChatGPT to start' ? error.message : 'Could not complete that turn. Please try again.' });
+              emit({ type: 'error', message: 'Could not complete that turn. Please try again.' });
             }
           } finally { if (!signal.aborted) { emit({ type: 'done' }); controller.close(); } else { try { controller.close(); } catch {} } }
         })();

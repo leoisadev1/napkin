@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import type { Conversation } from "../conversation/types";
 import { PencilIcon, SendIcon } from "./icons";
 import { LiveLine } from "./LiveLine";
-import { MicPicker, MicToggle, micState, MuteButton } from "./MicToggle";
+import { MicToggle, micState, MuteButton } from "./MicToggle";
 import { Suggestions } from "./Suggestions";
 
 export function VoiceDock({ conversation }: { conversation: Conversation }) {
@@ -28,7 +28,6 @@ export function VoiceDock({ conversation }: { conversation: Conversation }) {
       <div className="bar">
         <MicToggle conversation={conversation} />
         {mic === "live" && <MuteButton muted={conversation.muted} onToggle={() => conversation.setMuted(!conversation.muted)} />}
-        {mic !== "disabled" && <MicPicker conversation={conversation} />}
         <span className="bar-divider" aria-hidden="true" />
         <form className="composer" onSubmit={submit}>
           <label className="sr-only" htmlFor="composer-input">

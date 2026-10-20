@@ -6,6 +6,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { BoardId, BoardMeta } from "../boards/schema";
 import { TITLE_MAX } from "../boards/schema";
 import { BoardIcon, Mark, MoreIcon, NewBoardIcon, PencilIcon, SearchIcon, SidebarIcon, TrashIcon } from "./icons";
+import { MOD } from "./BoardChrome";
 import { Keys } from "./Keys";
 import "./boards.css";
 
@@ -184,12 +185,12 @@ export function BoardSidebar({ boards, activeId, open, drawer, mod, onToggle, on
           <header className="boards-header">
             <span className="boards-workspace">
               <Mark size={18} />
-              <span className="boards-workspace-name">Whiteboard</span>
+              <span className="boards-workspace-name">Napkin</span>
             </span>
-            <button type="button" className="boards-icon-btn" aria-label="Hide sidebar" aria-keyshortcuts="[" onClick={() => onToggle(false)}>
+            <button type="button" className="boards-icon-btn" aria-label="Hide sidebar" aria-keyshortcuts="Meta+B Control+B [" onClick={() => onToggle(false)}>
               <SidebarIcon />
               <span className="tip tip-down" role="presentation">
-                Hide sidebar<Keys combo="[" />
+                Hide sidebar<Keys combo={`${MOD} B`} />
               </span>
             </button>
             <button type="button" className="boards-icon-btn boards-new" aria-label="New board" aria-keyshortcuts="C" onClick={onCreate}>

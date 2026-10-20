@@ -186,6 +186,13 @@ export function BoardsApp({ store, Screen, onError }: { store: BoardStore; Scree
         setOpen(false);
         return;
       }
+      // Cmd/Ctrl+B toggles the sidebar from anywhere, even while typing, like most editors.
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(!open);
+        return;
+      }
       if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
       if (document.querySelector(".excalidraw-textEditorContainer textarea") !== null) return;
       if (event.key.toLowerCase() === "c" && !event.shiftKey) {

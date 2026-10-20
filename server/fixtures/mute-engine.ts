@@ -11,12 +11,12 @@ mock.module('../../src/voice/socket', () => ({ openVoiceSocket: async (args: Par
   socketCallbacks = args; connections++;
   return { readyState: WebSocket.OPEN, bufferedAmount: 0, send: (message: string) => { sent.push(message); }, close() {} };
 } }));
-mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], unlockMicrophones: async () => [], captureMicrophone: async (args: Parameters<typeof captureMicrophone>[0]) => { microphone = args; return () => {}; } }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: async (args: Parameters<typeof captureMicrophone>[0]) => { microphone = args; return () => {}; } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class { state = 'running'; async resume() {} async close() { this.state = 'closed'; } } });
 const requests: { input: AgentRequest; signal: AbortSignal | null | undefined; stream: ReadableStreamDefaultController<Uint8Array> }[] = [];
 const original = globalThis.fetch;
 globalThis.fetch = Object.assign(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-  if (url === '/api/status') return Response.json({ chatgpt: { kind: 'signed_out' }, devLlm: true, voice: true });
+  if (url === '/api/status') return Response.json({ voice: true });
   return new Response(new ReadableStream<Uint8Array>({ start(stream) { requests.push({ input: AgentRequest.parse(JSON.parse(String(init?.body))), signal: init?.signal, stream }); } }));
 }, { preconnect: original.preconnect });
 const { ConversationEngine } = await import('../../src/conversation/engine/conversation-engine');

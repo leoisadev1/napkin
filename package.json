@@ -14,14 +14,11 @@
     "lint": "oxlint"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.82",
     "@ai-sdk/openai": "^4.0.96",
     "@excalidraw/excalidraw": "^0.18.1",
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource-variable/inter": "^5.3.0",
-    "@opencoredev/loginwithchatgpt-ai": "^0.2.0",
-    "@opencoredev/loginwithchatgpt-core": "^0.2.0",
-    "@opencoredev/loginwithchatgpt-react": "^0.2.0",
-    "@opencoredev/loginwithchatgpt-server": "^0.2.0",
     "ai": "^7.0.143",
     "idb-keyval": "^6.3.0",
     "lucide-react": "^1.59.0",

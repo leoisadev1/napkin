@@ -460,7 +460,6 @@ type Listener = (level: number) => void;
 const WORD_MS = 230;
 const PHRASE_GAP_MS = 260;
 const NO_MICS: Conversation["micDevices"] = [];
-const noop = () => {};
 const DRAW_DELAY_MS = 800;
 const OP_GAP_MS = 260;
 const PAUSE_MS = 3200;
@@ -721,11 +720,6 @@ export function useMockConversation(bridge: BoardBridge, options: ConversationOp
       setMuted,
       micDevices: NO_MICS,
       micDevice: undefined,
-      setMicDevice: noop,
-      micMenu: "closed",
-      openMicMenu: noop,
-      closeMicMenu: noop,
-      pickMic: noop,
       micNotice: "",
       suggestions,
       pickSuggestion,

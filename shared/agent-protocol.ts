@@ -40,14 +40,8 @@ export const AgentEvent = z.discriminatedUnion("type", [
 ]);
 export type AgentEvent = z.infer<typeof AgentEvent>;
 
-/** GET /api/status: what the server can do right now for this browser session. */
+/** GET /api/status: what the server can do right now. */
 export const ServerStatus = z.object({
-  chatgpt: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("signed_in"), email: z.string().nullable(), plan: z.string().nullable() }),
-    z.object({ kind: z.literal("signed_out") }),
-  ]),
-  /** True when a dev-only LLM fallback is configured, so the app works without ChatGPT sign-in locally. */
-  devLlm: z.boolean(),
   /** True when GRADIUM_API_KEY is configured on the server. */
   voice: z.boolean(),
 });

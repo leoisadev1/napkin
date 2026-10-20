@@ -3,13 +3,7 @@
 // While live, a mute button sits beside it: muted, the meter goes flat, the dot goes grey and the button reads "Muted".
 import { useEffect, useRef } from "react";
 import type { Conversation } from "../conversation/types";
-import {
-  AlertIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  MicIcon,
-  MicOffIcon,
-} from "./icons";
+import { AlertIcon, MicIcon, MicOffIcon } from "./icons";
 
 export type MicState = "off" | "connecting" | "live" | "error" | "disabled";
 
@@ -162,91 +156,5 @@ export function MuteButton({
         <span>Muted</span>
       </span>
     </button>
-  );
-}
-
-/** Shorten long OS names: "MacBook Pro Microphone (Built-in)" reads as "MacBook Pro Microphone". */
-function micName(label: string) {
-  return label.replace(/\s*\([^)]*\)\s*$/, "") || label;
-}
-
-/** Which mic to use: a pill naming the current mic, and a menu above the bar. Talk opens the same menu when no mic is chosen yet. */
-export function MicPicker({ conversation }: { conversation: Conversation }) {
-  const { micDevices, micDevice, micMenu, closeMicMenu } = conversation;
-  const rootRef = useRef<HTMLDivElement>(null);
-  const current = micDevices.find((device) => device.id === micDevice);
-  const open = micMenu !== "closed";
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeMicMenu();
-    };
-    const onPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) closeMicMenu();
-    };
-    // Capture phase: the canvas swallows Escape before it bubbles to the window.
-    window.addEventListener("keydown", onKey, true);
-    window.addEventListener("pointerdown", onPointer);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("pointerdown", onPointer);
-    };
-  }, [open, closeMicMenu]);
-
-  useEffect(() => {
-    if (micMenu !== "open") return;
-    const target =
-      rootRef.current?.querySelector<HTMLButtonElement>(
-        '.mic-option[aria-checked="true"]',
-      ) ?? rootRef.current?.querySelector<HTMLButtonElement>(".mic-option");
-    target?.focus();
-  }, [micMenu]);
-
-  return (
-    <div className="mic-picker" ref={rootRef}>
-      <button
-        type="button"
-        className="mic-picker-button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={current ? `Microphone: ${current.label}` : "Choose a microphone"}
-        onClick={() =>
-          open ? conversation.closeMicMenu() : conversation.openMicMenu()
-        }
-      >
-        <span className="mic-picker-label">
-          {current ? micName(current.label) : "Choose mic"}
-        </span>
-        <ChevronDownIcon aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="mic-menu" role="menu" aria-label="Microphone">
-          <p className="mic-menu-title">Which microphone?</p>
-          {micMenu === "loading" ? (
-            <p className="mic-menu-empty">Looking for microphones…</p>
-          ) : micDevices.length === 0 ? (
-            <p className="mic-menu-empty">
-              No microphones found. Allow mic access in the browser, then try
-              again.
-            </p>
-          ) : (
-            micDevices.map((device) => (
-              <button
-                key={device.id}
-                type="button"
-                role="menuitemradio"
-                className="mic-option"
-                aria-checked={device.id === micDevice}
-                onClick={() => conversation.pickMic(device.id)}
-              >
-                <span>{device.label}</span>
-                {device.id === micDevice && <CheckIcon aria-hidden="true" />}
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
   );
 }

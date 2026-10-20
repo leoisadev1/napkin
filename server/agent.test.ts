@@ -16,18 +16,6 @@ test('status reports capabilities without secrets', async () => {
   const body = await response.text();
   expect(body).toContain('"voice":'); expect(body).not.toContain('GRADIUM_API_KEY'); expect(body).not.toContain('accessToken');
 });
-test('session store persists encrypted-session envelopes and honors expiration', async () => {
-  const { sessionStore } = await import('./auth');
-  const key = `test-${crypto.randomUUID()}`;
-  const value = { status: 'authenticated', tokensCipher: 'encrypted-test-value', createdAt: 1, updatedAt: 2 } satisfies import('@opencoredev/loginwithchatgpt-server').StoredSession;
-  try {
-    await sessionStore.set(key, value, { ttlMs: 60000 });
-    expect(await sessionStore.get(key)).toEqual(value);
-    await sessionStore.set(key, value, { ttlMs: -1 });
-    expect(await sessionStore.get(key)).toBeUndefined();
-  } finally { await sessionStore.delete(key); }
-});
-
 test('cross-origin voice token and agent requests are rejected', async () => {
   for (const route of ['agent', 'gradium/token']) {
     const response = await handleRequest(new Request(`http://test/api/${route}`, { headers: { origin: 'https://untrusted.example' } }));

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { SidebarIcon } from "./icons";
+import { MOD } from "./BoardChrome";
 import { Keys } from "./Keys";
 
 type Props = {
@@ -49,10 +50,10 @@ export function TitleIsland({ title, onRename, renameRequest, sidebar }: Props) 
   return (
     <div className="title-island" data-toggle={sidebar !== null}>
       {sidebar !== null && (
-        <button type="button" className="ghost-btn title-toggle" aria-label="Show sidebar" aria-keyshortcuts="[" onClick={sidebar.onShow}>
+        <button type="button" className="ghost-btn title-toggle" aria-label="Show sidebar" aria-keyshortcuts="Meta+B Control+B [" onClick={sidebar.onShow}>
           <SidebarIcon />
           <span className="tip tip-down" role="presentation">
-            Show sidebar<Keys combo="[" />
+            Show sidebar<Keys combo={`${MOD} B`} />
           </span>
         </button>
       )}

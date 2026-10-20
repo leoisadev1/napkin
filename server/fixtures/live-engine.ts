@@ -6,7 +6,7 @@ import { BoardState } from '../board-state';
 const requests: { input: AgentRequest; signal: AbortSignal | null | undefined; stream: ReadableStreamDefaultController<Uint8Array> }[] = [];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-  if (String(input) === '/api/status') return Response.json({ chatgpt: { kind: 'signed_out' }, devLlm: true, voice: true });
+  if (String(input) === '/api/status') return Response.json({ voice: true });
   if (String(input) === '/api/agent') return new Response(new ReadableStream<Uint8Array>({ start(stream) {
     requests.push({ input: AgentRequest.parse(JSON.parse(String(init?.body))), signal: init?.signal, stream });
   } }));
@@ -17,7 +17,7 @@ mock.module('../../src/voice/stt', () => ({ SpeechToText: class {
   constructor(callbacks: NonNullable<typeof speech>) { speech = callbacks; }
   setMuted() {} async connect() {} send() {} stop() {} flushPhrases() {} resetPhrases() { speech?.onPartial(''); }
 } }));
-mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], unlockMicrophones: async () => [], captureMicrophone: async () => () => {} }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: async () => () => {} }));
 mock.module('../../src/voice/tts', () => ({ TextToSpeech: class { constructor() { throw new Error('TTS must never open'); } } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class { state = 'running'; async resume() {} async close() { this.state = 'closed'; } } });
 const { ConversationEngine } = await import('../../src/conversation/engine/conversation-engine');

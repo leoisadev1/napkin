@@ -2,6 +2,7 @@ import { streamText } from 'ai';
 import { BoardOp } from '../shared/board';
 import type { AgentEvent, AgentRequest } from '../shared/agent-protocol';
 import { selectProvider } from './llm';
+import { recordUsage } from './budget';
 import { log } from './config';
 import { boardContext } from './board-context';
 import { answerGuard } from './answers';
@@ -105,7 +106,8 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
       case 'op': { const op = answers.operation(line.op); if (op) scheduleOp(op); break; }
       case 'suggestions': emit({ type: 'suggestions', items: line.items }); break;
       case 'image': {
-        if (imageInResponse || (imageStarted && !imageRequested)) break;
+        if (!provider.image || imageInResponse || (imageStarted && !imageRequested)) break;
+        const makeImage = provider.image;
         imageInResponse = true; imageStarted = true;
         const { id, prompt, caption, placement } = line;
         emit({ type: 'pending', id, label: 'Generating image…' });
@@ -115,7 +117,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
           try {
             // Optional art must never discard an otherwise complete refinement at its deadline.
             const imageSignal = input.mode === 'refine' ? AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.floor(7000 - (performance.now() - started))))]) : signal;
-            const dataUrl = await provider.image(prompt, imageSignal);
+            const dataUrl = await makeImage(prompt, imageSignal);
             const results = await Promise.all(waits);
             if (signal.aborted || results.some(result => !result)) return false;
             if (line.frame) emitOp(line.frame);
@@ -137,7 +139,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
       system: input.mode === 'suggest' ? suggestPrompt : input.mode === 'live' ? livePrompt + answers.instructions : systemPrompt + (input.mode === 'refine' ? '\nREFINE: Restructure the live sketch into useful diagrams. Replace loose redundant shapes with del and diagram, reusing node ids so edges survive. Correct misheard labels using the full speaking stretch. Fill missing ideas from the full stretch even if live drew nothing. Make at least one useful improvement: connect loose steps, correct a label, enrich a screen, add a missed idea or restructure redundancy. Preserve accurate content; never add filler just to emit an operation. Enrich the existing answer with its SAME diagram ID and SAME Pick ID. If none exists and a complete question has a known topic, supply one answer. Never add a second answer. Set title if untitled. Do not generate optional images during refinement; prioritize useful structure. Only generate an image when explicitly requested. Preserve unrelated board content. No suggestions (a parallel request handles chips). Keep to one main diagram, at most 8 nodes, and at most 10 lines.' : '\nTURN: Draw a fuller useful set if needed. End with short concrete next-step suggestions.') + answers.instructions,
       messages: [...requestHistory(input).map(turn => ({ role: turn.role, content: turn.text })), { role: 'user', content: `${boardContext(input.board, input.utterance)}\nNEW phrase: ${input.utterance}` }],
       abortSignal: signal, maxRetries: 0, maxOutputTokens: input.mode === 'suggest' ? 600 : input.mode === 'live' ? 1600 : input.mode === 'refine' ? 1200 : 1600,
-      providerOptions: { openai: { reasoningEffort: provider.reasoningEffort } },
+      providerOptions: provider.providerOptions,
       onError: ({ error }) => log('llm_stream_failed', { kind: error instanceof Error ? error.name : 'unknown' }),
     });
     for await (const part of result.fullStream) {
@@ -145,6 +147,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
       else if (part.type === 'error') throw part.error;
     }
     finishReason = await result.finishReason;
+    await recordUsage(await result.totalUsage);
     signal.throwIfAborted();
     parser.finish();
     await Promise.all(images);

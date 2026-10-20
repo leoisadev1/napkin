@@ -3,14 +3,14 @@ import type { BoardBridge } from '../../src/conversation/types';
 // Separate process: voice-device doubles cannot leak into other tests.
 let captureReady: ((stop: () => void) => void) | undefined;
 
-mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], unlockMicrophones: async () => [], captureMicrophone: () => new Promise<() => void>(resolve => { captureReady = resolve; }) }));
+mock.module('../../src/voice/microphone', () => ({ listMicrophones: async () => [], captureMicrophone: () => new Promise<() => void>(resolve => { captureReady = resolve; }) }));
 mock.module('../../src/voice/stt', () => ({ SpeechToText: class { setMuted() {} async connect() {} stop() {} resetPhrases() {} send() {} } }));
 Object.defineProperty(globalThis, 'AudioContext', { value: class {
   state = 'running'; async resume() {} async close() { this.state = 'closed'; }
 } });
 const originalFetch = globalThis.fetch;
 globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
-  if (String(input) === '/api/status') return Response.json({ chatgpt: { kind: 'signed_out' }, devLlm: true, voice: true });
+  if (String(input) === '/api/status') return Response.json({ voice: true });
   if (String(input) === '/api/agent') return new Response(new ReadableStream<Uint8Array>());
   throw new Error('Unexpected fixture fetch');
 }, { preconnect: originalFetch.preconnect });
