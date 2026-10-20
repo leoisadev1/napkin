@@ -85,7 +85,9 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
     const root = resolve('dist');
     const target = resolve(root, `.${decodeURIComponent(url.pathname)}`);
     if (target !== root && !target.startsWith(root + sep)) return new Response('Forbidden', { status: 403 });
-    const file = Bun.file(target);
+    // Clean URLs for static pages: /demo serves demo.html.
+    const page = Bun.file(`${target}.html`);
+    const file = !(await Bun.file(target).exists()) && !/\.[a-z0-9]+$/i.test(target) && await page.exists() ? page : Bun.file(target);
     if (await file.exists()) return new Response(request.method === 'HEAD' ? null : file, { headers: { 'content-type': file.type } });
     const fallback = Bun.file(resolve(root, 'index.html'));
     if (await fallback.exists()) return new Response(request.method === 'HEAD' ? null : fallback, { headers: { 'content-type': 'text/html' } });

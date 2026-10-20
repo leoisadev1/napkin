@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Napkin demo</title>
+    <meta name="description" content="Napkin: talk through an idea and the board sketches it as you speak." />
+    <style>
+      :root { color-scheme: light dark; --accent: #5e6ad2; --text: #1b1c20; --muted: #5d6070; --bg: #f7f7f8; --card: #fff; --border: #e4e4e8; }
+      @media (prefers-color-scheme: dark) { :root { --text: #ececf0; --muted: #a0a3b1; --bg: #0f0f11; --card: #17171a; --border: #2a2a30; } }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      main { max-width: 880px; margin: 0 auto; padding: 48px 20px 72px; }
+      header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+      header svg { width: 36px; height: 36px; flex: none; }
+      h1 { margin: 0; font-size: 28px; letter-spacing: -0.02em; }
+      .tagline { margin: 0 0 28px; color: var(--muted); font-size: 18px; }
+      video { width: 100%; border-radius: 12px; border: 1px solid var(--border); background: #000; display: block; }
+      h2 { margin: 36px 0 8px; font-size: 18px; letter-spacing: -0.01em; }
+      p, li { color: var(--text); }
+      ul { padding-left: 20px; }
+      .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+      .links a { display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; }
+      .primary { background: var(--accent); color: #fff; }
+      .secondary { border: 1px solid var(--border); color: var(--text); background: var(--card); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#5e6ad2"/><g transform="rotate(-9 10 10)"><rect x="4.4" y="4.4" width="11.2" height="11.2" rx="1.6" fill="#fff"/><path d="M10 4.9v10.2M4.9 10h10.2" stroke="#5e6ad2" stroke-opacity=".18" stroke-width=".6"/><path d="M6.4 11.2c.8-2.1 1.6-2.1 2.3 0s1.6 2.1 2.4 0 1.5-2.1 2.4-.8" stroke="#5e6ad2" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
+        <h1>Napkin</h1>
+      </header>
+      <p class="tagline">Talk through an idea and the board sketches it as you speak.</p>
+
+      <video src="/demo.mp4" poster="/demo-poster.jpg" controls playsinline preload="metadata"></video>
+
+      <h2>What it does</h2>
+      <p>Napkin is a whiteboard you talk to. Describe an app, a process or a plan out loud and boxes, flows and phone-screen mockups appear while you are still speaking. Change your mind ("make the button say Order now") and the board edits what is already there. Pause and it tidies up and suggests what to add next. It is for founders, product people and anyone who thinks better out loud than with a mouse.</p>
+
+      <h2>Where Gradium comes in</h2>
+      <ul>
+        <li><strong>Gradium Speech-to-Text is the whole input.</strong> The browser streams microphone audio over a WebSocket straight to Gradium's real-time STT, using a short-lived token from our server so the API key never reaches the browser.</li>
+        <li><strong>Partial transcripts drive the drawing.</strong> As Gradium returns words, Napkin cuts them into phrases and sends each one to Claude Haiku 5.5, which replies with small board operations. The first shape usually lands about a second after you finish a phrase.</li>
+        <li><strong>Gradium's turn detection decides when you have paused,</strong> which is when Napkin tidies the board and offers next steps.</li>
+      </ul>
+
+      <div class="links">
+        <a class="primary" href="/">Try it live</a>
+        <a class="secondary" href="https://github.com/leoisadev1/napkin">Source on GitHub</a>
+      </div>
+    </main>
+  </body>
+</html>
