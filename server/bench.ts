@@ -14,6 +14,7 @@ export const scenarios = [
   { name: 'comparison', phrases: ['we need storage for our offline notes app', 'how would SQLite compare with Postgres', 'people should edit on a train with no internet', 'and sync when they reconnect'] },
   { name: 'question', phrases: ['I am making a meal planning app', 'what could make it useful for busy parents', 'maybe leftovers become lunch the next day', 'and a shopping list grouped by aisle'] },
   { name: 'correction', phrases: ['a cat simulator game with coins', 'you do chores and upgrade your cat', 'no wait not chores little hunting quests', 'then unlock a rooftop and repeat'] },
+  { name: 'coffee-demo', phrases: ['I want an app for ordering coffee ahead', 'pick your drink, pay, and pick it up', 'show me the phone screen for picking a drink', 'make the button say order now'] },
   { name: 'rambling', phrases: ['so uh I have been thinking about', 'a quiet coworking cafe for night owls', 'coffee downstairs and silent desks upstairs', 'what if we sold monthly desk passes'] },
 ];
 const output = process.env.BENCH_OUTPUT ?? '/tmp/rtw-bench';
@@ -91,7 +92,7 @@ for (const scenario of scenarios.filter(row => !process.env.BENCH_SCENARIO || ro
   } });
   try {
     for (const text of scenario.phrases) {
-      lastWordAt = performance.now(); chunker.addText(text); chunker.endSegment(); await Bun.sleep(1000);
+      lastWordAt = performance.now(); chunker.addText(text); chunker.endSegment(); await Bun.sleep(Number(process.env.BENCH_GAP_MS ?? 1000));
     }
     chunker.endTurn(); engine.finishSpokenStretch();
     const deadline = performance.now() + 45000;

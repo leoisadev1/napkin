@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BoardOp, NodeId, Placement } from '../shared/board';
+import { BoardOp, DiagramKind, NodeId, Placement } from '../shared/board';
 import { concise, conciseOperation, shapeLabel } from './concision';
 import { log } from './config';
 
@@ -75,7 +75,7 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
         value = { op: 'add_edge', id: word(parts[0]), from, to, label: parts[2] ? concise(quoted(parts[2]), 3, 60) : '' }; break;
       }
       case 'diagram': {
-        const [head = [], ...sections] = groups(parts); count(head, 3, 4);
+        const [head = [], ...sections] = groups(parts); count(head, 2, 4);
         const nodes: unknown[] = []; const links: unknown[] = []; const axes: string[] = [];
         let section: 'nodes' | 'links' | 'axes' = 'nodes';
         for (const group of sections) {
@@ -98,7 +98,9 @@ export function parseDrawingLine(line: string): DrawingLine | undefined {
           const label = (match[2] ?? '').trim();
           nodes.push({ id: match[1], label: concise(label.startsWith('"') ? z.string().parse(JSON.parse(label)) : label, 6, 120), color: match[3], shape: match[4] ?? 'box', parent: parentMatch?.[1] ?? null });
         }
-        value = { op: 'add_diagram', id: word(head[0]), kind: word(head[1]), title: concise(quoted(head.at(-1)), 6, 80), placement: placement(head.slice(2, -1)), nodes, links, axes };
+        // Fast models sometimes drop the kind ("diagram id auto \"Title\""); a missing kind means a flow.
+        const hasKind = head.length > 2 && head[1]?.kind === 'word' && DiagramKind.safeParse(head[1].value).success;
+        value = { op: 'add_diagram', id: word(head[0]), kind: hasKind ? word(head[1]) : 'flow', title: concise(quoted(head.at(-1)), 6, 80), placement: placement(head.slice(hasKind ? 2 : 1, -1)), nodes, links, axes };
         break;
       }
       case 'phone': case 'desktop': {

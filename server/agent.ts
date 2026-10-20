@@ -60,7 +60,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
   });
   const { input, emit } = args;
   const answers = answerGuard(input);
-  let firstOp = true; let opsEmitted = 0; let firstOpMs = -1; let rawTextLength = 0; let finishReason = 'error';
+  let firstOp = true; let opsEmitted = 0; let firstOpMs = -1; let rawTextLength = 0; let rawText = ''; let finishReason = 'error';
   const emitOp = (op: BoardOp) => {
     if (signal.aborted) return;
     opsEmitted++; firstOpMs = firstOp ? Math.round(performance.now() - started) : firstOpMs;
@@ -88,7 +88,16 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
     if (barrier) waits.push(barrier);
     return waits;
   };
+  // Live replies sometimes delete boxes and then fail to draw their replacement, so the user watches their idea vanish.
+  // Hold live deletes until the reply's next addition actually parses, and drop them if none does.
+  let heldDeletes: BoardOp[] = [];
+  const asksToRemove = /\b(?:remove|delete|get rid of|erase|drop|take out|scrap|lose)\b/i.test(input.utterance);
   const scheduleOp = (op: BoardOp) => {
+    if (input.mode === 'live' && op.op === 'delete' && !asksToRemove) { heldDeletes.push(op); return; }
+    if (heldDeletes.length && op.op.startsWith('add_')) { const held = heldDeletes; heldDeletes = []; held.forEach(placeOp); }
+    placeOp(op);
+  };
+  const placeOp = (op: BoardOp) => {
     const waits = dependencies(op);
     if (!waits.length) { emitOp(op); return; }
     const ready = Promise.all(waits).then(results => {
@@ -136,20 +145,22 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
   });
   try {
     const result = streamText({ model: provider.model,
-      system: input.mode === 'suggest' ? suggestPrompt : input.mode === 'live' ? livePrompt + answers.instructions : systemPrompt + (input.mode === 'refine' ? '\nREFINE: Restructure the live sketch into useful diagrams. Replace loose redundant shapes with del and diagram, reusing node ids so edges survive. Correct misheard labels using the full speaking stretch. Fill missing ideas from the full stretch even if live drew nothing. Make at least one useful improvement: connect loose steps, correct a label, enrich a screen, add a missed idea or restructure redundancy. Preserve accurate content; never add filler just to emit an operation. Enrich the existing answer with its SAME diagram ID and SAME Pick ID. If none exists and a complete question has a known topic, supply one answer. Never add a second answer. Set title if untitled. Do not generate optional images during refinement; prioritize useful structure. Only generate an image when explicitly requested. Preserve unrelated board content. No suggestions (a parallel request handles chips). Keep to one main diagram, at most 8 nodes, and at most 10 lines.' : '\nTURN: Draw a fuller useful set if needed. End with short concrete next-step suggestions.') + answers.instructions,
+      system: input.mode === 'suggest' ? suggestPrompt : input.mode === 'live' ? livePrompt + answers.instructions : systemPrompt + (input.mode === 'refine' ? '\nREFINE: Tidy what the speaker already said; never add content they did not say. Allowed: merge duplicates (del the extra, keep one), turn loose steps that were spoken as a sequence into one diagram reusing their node ids, connect steps they described, correct misheard labels using the full speaking stretch, and draw an idea they clearly said that live missed. Not allowed: new screens, new steps, new features, new frames, second diagrams for a topic already drawn, or generic additions. If the board already matches what was said, output nothing. Enrich an existing answer with its SAME diagram ID and SAME Pick ID; only supply an answer for a complete spoken question with a known topic. Never add a second answer. Set title if untitled. No images unless explicitly requested. Preserve unrelated board content. No suggestions (a parallel request handles chips). At most 8 lines.' : '\nTURN: Draw a fuller useful set if needed. End with short concrete next-step suggestions.') + answers.instructions,
       messages: [...requestHistory(input).map(turn => ({ role: turn.role, content: turn.text })), { role: 'user', content: `${boardContext(input.board, input.utterance)}\nNEW phrase: ${input.utterance}` }],
       abortSignal: signal, maxRetries: 0, maxOutputTokens: input.mode === 'suggest' ? 600 : input.mode === 'live' ? 1600 : input.mode === 'refine' ? 1200 : 1600,
       providerOptions: provider.providerOptions,
       onError: ({ error }) => log('llm_stream_failed', { kind: error instanceof Error ? error.name : 'unknown' }),
     });
     for await (const part of result.fullStream) {
-      if (part.type === 'text-delta') { rawTextLength += part.text.length; parser.push(part.text); }
+      if (part.type === 'text-delta') { rawTextLength += part.text.length; if (process.env.RTW_DEBUG_RAW === '1') rawText += part.text; parser.push(part.text); }
       else if (part.type === 'error') throw part.error;
     }
     finishReason = await result.finishReason;
+    if (process.env.RTW_DEBUG_RAW === '1') log('agent_raw', { mode: input.mode, utterance: input.utterance.slice(-80), text: rawText.slice(0, 600) });
     await recordUsage(await result.totalUsage);
     signal.throwIfAborted();
     parser.finish();
+    if (heldDeletes.length) { log('live_delete_dropped', { count: heldDeletes.length }); heldDeletes = []; }
     await Promise.all(images);
     for (const op of answers.cleanup()) emitOp(op);
     if (imageFailed && !signal.aborted) emit({ type: 'error', message: 'Image generation failed. Please try again.' });

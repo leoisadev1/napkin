@@ -14,7 +14,7 @@ export class StretchQuestions {
     const comparisonComplete = !/\bcompare\b/i.test(remaining)
       || /\bcompare\s+.+\b(?:and|vs\.?|versus|with|to)\s+\S/i.test(remaining)
       || /\bcompare\s+(?:these|those|the|our)\s+\S+/i.test(remaining);
-    const imperative = comparisonComplete && /\b(?:brainstorm|compare|recommend|suggest|give me|show me|throw (?:some )?ideas (?:down|out)|let['’]?s map out|come up with|think of|experiment with|play with|play around with|try (?:out )?some|list (?:some|a few|out|me)|generate|name (?:it|this|the)|help me|explore)\b|\bsome (?:names|ideas|options|titles|taglines|slogans|logos|angles|concepts)\b/i.test(remaining)
+    const imperative = comparisonComplete && /\b(?:brainstorm|compare|recommend|suggest|give me|throw (?:some )?ideas (?:down|out)|come up with|think of|experiment with|play with|play around with|try (?:out )?some|list (?:some|a few|out|me)|generate|name (?:it|this|the)|help me|explore)\b|\bsome (?:names|ideas|options|titles|taglines|slogans|logos|angles|concepts)\b/i.test(remaining)
       && !/\b(?:do you|can you|could you|what|which|how|would you)\b/i.test(remaining)
       && !/\b(?:and|or|for|with|a|an|the|to)\s*$/i.test(remaining);
     const spokenQuestion = comparisonComplete && /\b(?:what|which|how|why|can you|could you|would you|do you)\b/i.test(remaining)
@@ -27,7 +27,7 @@ export class StretchQuestions {
     // question, not another answer slot (e.g. 'that we could possibly take?').
     const prior = this.questions.at(-1);
     const priorClosed = /[.?!]$/.test(stretch.slice(0, this.consumed).trim());
-    const newImperative = /^(?:and |also |now )?(?:brainstorm|compare|recommend|suggest|give me|show me|generate|name|help me|explore|throw|let['’]?s|come up with|think of|experiment with|play with|try|list)\b/i.test(remaining);
+    const newImperative = /^(?:and |also |now )?(?:brainstorm|compare|recommend|suggest|give me|generate|name|help me|explore|throw|let['’]?s|come up with|think of|experiment with|play with|try|list)\b/i.test(remaining);
     if (prior && candidates.length && !priorClosed && !newImperative) {
       prior.text = `${prior.text} ${remaining}`.slice(-1600); this.consumed = stretch.length;
       return this.policy();
