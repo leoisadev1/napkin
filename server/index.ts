@@ -34,7 +34,10 @@ export async function readBoundedBody(request: Request, limit = 256_000) {
 export async function handleRequest(request: Request, ip = 'local'): Promise<Response> {
   const url = new URL(request.url);
   const origin = request.headers.get('origin');
-  if (origin && origin !== url.origin && !config().ALLOWED_ORIGINS.includes(origin) && (url.pathname === '/api/agent' || url.pathname === '/api/gradium/token')) return Response.json({ error: 'Origin not allowed' }, { status: 403 });
+  // Behind a host's proxy the request URL is the internal address; the public origin comes from the forwarded headers.
+  const forwardedHost = config().TRUST_PROXY ? request.headers.get('x-forwarded-host') ?? request.headers.get('host') : null;
+  const selfOrigin = forwardedHost ? `${request.headers.get('x-forwarded-proto') ?? 'https'}://${forwardedHost}` : url.origin;
+  if (origin && origin !== selfOrigin && !config().ALLOWED_ORIGINS.includes(origin) && (url.pathname === '/api/agent' || url.pathname === '/api/gradium/token')) return Response.json({ error: 'Origin not allowed' }, { status: 403 });
   if (url.pathname === '/api/status' && request.method === 'GET') {
     return Response.json(ServerStatus.parse({ voice: Boolean(config().GRADIUM_API_KEY) }), { headers: { 'cache-control': 'no-store' } });
   }

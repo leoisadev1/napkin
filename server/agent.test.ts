@@ -32,3 +32,15 @@ test('chunked oversized input is canceled at the byte boundary', async () => {
   const response = await handleRequest(new Request('http://test/api/agent', { method: 'POST', body }));
   expect(response.status).toBe(413); expect(canceled).toBe(true); expect(pulled).toBeLessThanOrEqual(6);
 });
+
+test('behind a trusted proxy, same-site requests pass the origin check using the forwarded host', async () => {
+  const previous = process.env.TRUST_PROXY;
+  process.env.TRUST_PROXY = '1';
+  try {
+    const headers = { origin: 'https://napkin.example', host: 'napkin.example', 'x-forwarded-proto': 'https' };
+    const response = await handleRequest(new Request('http://0.0.0.0:8080/api/agent', { method: 'POST', headers, body: '{}' }));
+    expect(response.status).toBe(400);
+    const foreign = await handleRequest(new Request('http://0.0.0.0:8080/api/agent', { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body: '{}' }));
+    expect(foreign.status).toBe(403);
+  } finally { if (previous === undefined) delete process.env.TRUST_PROXY; else process.env.TRUST_PROXY = previous; }
+});
