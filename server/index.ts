@@ -6,6 +6,14 @@ import { runAgent } from './agent';
 import { config, log } from './config';
 
 const buckets = new Map<string, { count: number; resetAt: number }>();
+/** Fixed one-minute window per client and endpoint. Returns false once the client is over the limit. */
+function allow(key: string, limit: number) {
+  const now = Date.now();
+  for (const [name, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(name);
+  const bucket = buckets.get(key) ?? { count: 0, resetAt: now + 60_000 };
+  buckets.set(key, bucket);
+  return ++bucket.count <= limit;
+}
 const Token = z.object({ token: z.string().min(1), expires_at: z.string() });
 export async function readBoundedBody(request: Request, limit = 256_000) {
   if (!request.body) return '';
@@ -39,11 +47,7 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
     if (!key) return Response.json({ error: 'Voice is not configured' }, { status: 503 });
     const session = await auth.getSession(request);
     if (session.status !== 'authenticated' && !config().DEV_LLM_BASE_URL) return Response.json({ error: 'Sign in with ChatGPT to use voice' }, { status: 401 });
-    const now = Date.now();
-    for (const [key, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(key);
-    const bucket = buckets.get(ip) ?? { count: 0, resetAt: now + 60_000 };
-    buckets.set(ip, bucket);
-    if (++bucket.count > 30) return Response.json({ error: 'Too many voice connections' }, { status: 429, headers: { 'retry-after': '60' } });
+    if (!allow(`voice:${ip}`, 30)) return Response.json({ error: 'Too many voice connections' }, { status: 429, headers: { 'retry-after': '60' } });
     try {
       const upstream = await fetch('https://api.gradium.ai/api/api-keys/token', { headers: { 'x-api-key': key }, signal: AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]) });
       if (!upstream.ok) throw new Error('Gradium token request failed');
@@ -51,6 +55,8 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
     } catch { log('gradium_token_failed'); return Response.json({ error: 'Could not connect to Gradium' }, { status: 502 }); }
   }
   if (url.pathname === '/api/agent' && request.method === 'POST') {
+    // Talking fast sends a phrase every second or two, plus suggestions and tidy-ups; this caps a scripted abuser of the shared key.
+    if (!allow(`agent:${ip}`, 90)) return Response.json({ error: 'Too many requests. Wait a minute and try again.' }, { status: 429, headers: { 'retry-after': '60' } });
     if (Number(request.headers.get('content-length') ?? 0) > 256_000) return Response.json({ error: 'Request too large' }, { status: 413 });
     let input: AgentRequest;
     try { input = AgentRequest.parse(JSON.parse(await readBoundedBody(request))); }
@@ -87,8 +93,13 @@ export async function handleRequest(request: Request, ip = 'local'): Promise<Res
   }
   return new Response('Not found', { status: 404 });
 }
+/** Behind a host's proxy (TRUST_PROXY=1) every request arrives from the proxy, so rate limits key on the forwarded client address instead. */
+function clientIp(request: Request, direct: string | undefined) {
+  const forwarded = config().TRUST_PROXY ? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() : undefined;
+  return forwarded || direct;
+}
 if (import.meta.main) {
-  const server = Bun.serve({ hostname: config().API_HOST, port: config().API_PORT, idleTimeout: 120, fetch: (request, server) => handleRequest(request, server.requestIP(request)?.address),
+  const server = Bun.serve({ hostname: config().API_HOST, port: config().API_PORT, idleTimeout: 120, fetch: (request, server) => handleRequest(request, clientIp(request, server.requestIP(request)?.address)),
     error() { log('request_failed'); return Response.json({ error: 'Internal server error' }, { status: 500 }); },
   });
   log('server_started', { port: server.port ?? config().API_PORT });

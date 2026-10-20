@@ -19,6 +19,8 @@ const Config = z.object({
   DEV_LLM_REFINE_REASONING_EFFORT: z.enum(['low', 'medium']).default('low'),
   DEV_IMAGE_MODEL: z.string().default('gpt-image-1'),
   /** Extra browser origins allowed to call the API, comma separated. Needed behind an HTTPS proxy such as Tailscale Serve. */
+  /** Set to 1 when a hosting proxy (Railway, Fly) sits in front and sets X-Forwarded-For. */
+  TRUST_PROXY: z.enum(['0', '1']).default('0').transform(value => value === '1'),
   ALLOWED_ORIGINS: z.string().default('').transform(value => value.split(',').map(origin => origin.trim()).filter(Boolean)),
 });
 export function config() {
