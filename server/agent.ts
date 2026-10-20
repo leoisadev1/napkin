@@ -92,7 +92,30 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
   // Hold live deletes until the reply's next addition actually parses, and drop them if none does.
   let heldDeletes: BoardOp[] = [];
   const asksToRemove = /\b(?:remove|delete|get rid of|erase|drop|take out|scrap|lose)\b/i.test(input.utterance);
+  // Haiku sometimes turns any app mention into a phone mockup. Live, a NEW screen needs words asking for one;
+  // re-emitting an existing screen (an edit) always passes. A frame waits for its first child so a dropped
+  // screen never leaves an empty frame behind.
+  const asksForScreen = /\b(?:screens?|pages?|mock-?ups?|ui|interface|wireframes?|layout|homepage|landing|views?|phone|desktop)\b/i.test(input.utterance);
+  const existing = new Set(input.board.items.map(item => item.id));
+  let heldFrame: Extract<BoardOp, { op: 'add_frame' }> | undefined;
+  const frameOf = new Map(input.board.items.flatMap(item => item.frame ? [[item.id, item.frame] as const] : []));
   const scheduleOp = (op: BoardOp) => {
+    // Re-emitting a screen to edit it must not pull it out of its frame.
+    if (op.op === 'add_mockup' && op.placement.kind === 'auto' && frameOf.has(op.id)) op = { ...op, placement: { kind: 'inside', frame: frameOf.get(op.id) ?? '' } };
+    if (input.mode === 'live') {
+      if (op.op === 'add_frame') { if (heldFrame) emitLive(heldFrame); heldFrame = op; return; }
+      if (op.op === 'add_mockup' && !asksForScreen && !existing.has(op.id)) {
+        // Keep the idea on the board as a plain box, so the sentence still draws something.
+        log('live_screen_dropped');
+        const inHeld = heldFrame && op.placement.kind === 'inside' && op.placement.frame === heldFrame.id;
+        if (inHeld) heldFrame = undefined;
+        op = { op: 'add_shape', id: op.id, shape: 'box', label: op.title, color: 'blue', placement: inHeld ? { kind: 'auto' } : op.placement };
+      }
+      if (heldFrame) { const frame = heldFrame; heldFrame = undefined; emitLive(frame); }
+    }
+    emitLive(op);
+  };
+  const emitLive = (op: BoardOp) => {
     if (input.mode === 'live' && op.op === 'delete' && !asksToRemove) { heldDeletes.push(op); return; }
     if (heldDeletes.length && op.op.startsWith('add_')) { const held = heldDeletes; heldDeletes = []; held.forEach(placeOp); }
     placeOp(op);
@@ -161,6 +184,7 @@ export async function runAgent(args: { request: Request; input: AgentRequest; si
     signal.throwIfAborted();
     parser.finish();
     if (heldDeletes.length) { log('live_delete_dropped', { count: heldDeletes.length }); heldDeletes = []; }
+    heldFrame = undefined;
     await Promise.all(images);
     for (const op of answers.cleanup()) emitOp(op);
     if (imageFailed && !signal.aborted) emit({ type: 'error', message: 'Image generation failed. Please try again.' });
